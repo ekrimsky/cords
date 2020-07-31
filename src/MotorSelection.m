@@ -69,9 +69,12 @@ properties (GetAccess = public, SetAccess = private)
     % will need restrucutre inputs 
     % c_num, c_den, beta_num, beta_den 
     cost_ub 
-    cost_lb 
-    num_idx     % index into x  
-    den_idx     % index into x 
+    cost_lb
+    % Fractional Objective (r_num'*x + beta_num)/(r_den'*x + beta_den) 
+    r_num
+    r_den
+    beta_num
+    beta_den
 end 
 
 
@@ -194,51 +197,6 @@ methods (Access = public)
         assert(isfield(problem_data, 'I_u'), 'Missing I_u');
 
 
-        if (isfield(problem_data, 'cost_ub') && ~isempty(problem_data.cost_ub)) ||...
-           (isfield(problem_data, 'cost_lb') && ~isempty(problem_data.cost_lb)) ||...
-           (isfield(problem_data, 'num_idx') && ~isempty(problem_data.num_idx)) ||...
-           (isfield(problem_data, 'den_idx') && ~isempty(problem_data.den_idx)) 
-
-           % If it has any one of those field and no empty 
-           % need to ensure it has all of them 
-
-
-           % TODO -- more general linear fractional 
-           % with implicit non-negativty constraints on denominator
-           % will need to incorporate that into ineq matrix 
-
-            assert(isfield(problem_data, 'cost_ub') &&...
-                 ~isempty(problem_data.cost_ub),...
-                 'Cost upper bound required for fractional problems'); 
-            assert(isfield(problem_data, 'cost_lb') &&...
-                 ~isempty(problem_data.cost_lb),...
-                 'Cost lower bound required for fractional problems'); 
-            assert(isfield(problem_data, 'num_idx') &&...
-                 ~isempty(problem_data.num_idx),...
-                 'Numerator index required for fractional problems'); 
-            assert(isfield(problem_data, 'den_idx') &&...
-                 ~isempty(problem_data.den_idx),...
-                 'Denominator index required for fractional problems'); 
-
-            % TODO -- make sure indices are integer
-            % and not outside valid range 
-            
-
-
-            % TODO -- check that cost inputs are empty 
-
-            assert(isnumeric(problem_data.cost_ub), 'Costs must be numeric');
-            assert(isnumeric(problem_data.cost_lb), 'Costs must be numeric');
-            assert(problem_data.cost_ub - problem_data.cost_lb > 0,...
-                    'Cost upper bound must be greater than lower bound'); 
-            obj.problem_type = 'fractional'; 
-        else 
-            obj.problem_type = 'standard'; 
-        end 
-
-
-
-
 
         % Get dummy motor and dummy gearbox for input validation 
         test_motor = obj.test_motor; 
@@ -316,6 +274,12 @@ methods (Access = public)
         for j = 1:m + 1
             Qj = Q{j}(test_motor, test_gearbox); 
             Mj = M{j}(test_motor, test_gearbox); 
+
+            if j == 1
+                Q0_test = Qj;  % used in veryfying fractional inputs 
+                M0_test = Mj;
+            end 
+
             if isa(c{j}, 'function_handle')
                 cj = c{j}(test_motor, test_gearbox);
             else
@@ -336,6 +300,8 @@ methods (Access = public)
 
             if isempty(Qj); Q{j} = @(~, ~) Q_empty; end 
             if isempty(Mj); M{j} = @(~, ~) M_empty; end 
+
+
 
             assert(issparse(Qj) || isempty(Qj),...
                              'update_problem: Q matrices must be sparse');
@@ -424,6 +390,67 @@ methods (Access = public)
         end 
 
 
+        if (isfield(problem_data, 'cost_ub') && ~isempty(problem_data.cost_ub)) ||...
+           (isfield(problem_data, 'cost_lb') && ~isempty(problem_data.cost_lb)) ||...
+           (isfield(problem_data, 'r_num') && ~isempty(problem_data.r_num)) ||...
+           (isfield(problem_data, 'r_den') && ~isempty(problem_data.r_den))  || ...
+           (isfield(problem_data, 'beta_num') && ~isempty(problem_data.beta_num)) ||...
+           (isfield(problem_data, 'beta_den') && ~isempty(problem_data.beta_den)) 
+
+
+           % If it has any one of those field and no empty 
+           % need to ensure it has ALL of them 
+            assert(isfield(problem_data, 'cost_ub') &&...
+                 ~isempty(problem_data.cost_ub),...
+                 'Cost upper bound required for fractional problems'); 
+            assert(isfield(problem_data, 'cost_lb') &&...
+                 ~isempty(problem_data.cost_lb),...
+                 'Cost lower bound required for fractional problems'); 
+            assert(isfield(problem_data, 'r_num') &&...
+                 ~isempty(problem_data.r_den),...
+                 'Numerator vector required for fractional problems'); 
+            assert(isfield(problem_data, 'r_den') &&...
+                 ~isempty(problem_data.r_num),...
+                 'Denominator vector required for fractional problems'); 
+            assert(isfield(problem_data, 'beta_num') &&...
+                 ~isempty(problem_data.beta_num),...
+                 'Numerator offset required for fractional problems'); 
+            assert(isfield(problem_data, 'beta_den') &&...
+                 ~isempty(problem_data.beta_den),...
+                 'Denominator offset required for fractional problems'); 
+
+            assert(isnumeric(problem_data.cost_ub), 'Costs must be numeric');
+            assert(isnumeric(problem_data.cost_lb), 'Costs must be numeric');
+            assert(problem_data.cost_ub - problem_data.cost_lb > 0,...
+                    'Cost upper bound must be greater than lower bound'); 
+
+            % make col vec regardless of input 
+            problem_data.r_num = problem_data.r_num(:); 
+            problem_data.r_den = problem_data.r_den(:); 
+
+            % Size + Range Check on inputs 
+            assert(isscalar(problem_data.cost_ub), 'Cost upper bound must be scalar');
+            assert(~isinf(problem_data.cost_ub), 'Cost upper bound must be finite');
+            assert(isscalar(problem_data.cost_lb), 'Cost lower bound must be scalar');
+            assert(~isinf(problem_data.cost_lb), 'Cost lower bound must be finite');
+            assert(isscalar(problem_data.beta_num), 'beta_num must be scalar');
+            assert(~isinf(problem_data.beta_num), 'beta_num must be finite');
+            assert(isscalar(problem_data.beta_den), 'beta_den must be scalar');
+            assert(~isinf(problem_data.beta_den), 'beta_den must be finite');
+            assert(length(problem_data.r_num) == w, 'r_num must be length %d', w);
+            assert(length(problem_data.r_den) == w, 'r_den must be length %d', w);
+
+            % If linear fractional - cost terms must all be zero/empty 
+            error_txt = 'Cost inputs must be zero or empty for fractional problem';
+            assert(isempty(Q0_test) || nnz(Q0_test) == 0, error_txt);
+            assert(isempty(c{1}) || nnz(c{1}) == 0, error_txt);
+            assert(isempty(M0_test) || nnz(M0_test) == 0, error_txt);
+            assert(isempty(r{1}) || nnz(r{1}) == 0, error_txt);
+            assert(isempty(bet{1}) ||  bet{1} == 0, error_txt);
+            obj.problem_type = 'fractional'; 
+        else 
+            obj.problem_type = 'standard'; 
+        end 
 
 
         %
@@ -450,12 +477,13 @@ methods (Access = public)
         obj.m = m;
         obj.p = p; 
 
-
         if strcmp(obj.problem_type, 'fractional')
             obj.cost_ub = problem_data.cost_ub;
             obj.cost_lb = problem_data.cost_lb;
-            obj.num_idx = problem_data.num_idx;
-            obj.den_idx = problem_data.den_idx; 
+            obj.r_num = problem_data.r_num;
+            obj.r_den = problem_data.r_den; 
+            obj.beta_num = problem_data.beta_num;
+            obj.beta_den = problem_data.beta_den; 
         end 
 
     end     
@@ -539,8 +567,8 @@ methods (Access = public)
                  num_init_combos - num_updated_combos);
         
 
-        %combos = combos(1:min(length(combos), 200), :); 
-        %warning('remember to comment this debug thing out limiting combos to 200')
+        combos = combos(1:min(length(combos), 200), :); 
+        warning('remember to comment this debug thing out limiting combos to 200')
     
 
         %%%% Inputs needed beyond this point (for if splitting )
@@ -996,12 +1024,10 @@ methods (Access = private)
         if strcmp(obj.problem_type, 'fractional')
             % augment H with equality 
             A_aug = zeros(2, dim_y); 
-            A_aug(1, x_start_idx + obj.num_idx - 1) = 1;
-            A_aug(1, x_start_idx + obj.den_idx - 1) = -bound; 
-            A_aug(2, x_start_idx + obj.den_idx - 1) = -1; % nonnegativitiy -- need to generalize 
-            b_aug = [0; 0];
-            % TODO -- update for linear fractional and add
-            % positivity constraint on denom 
+            A_aug(1, x_start_idx:x_end_idx) = obj.r_num -bound*obj.r_den;
+            % Constrain denominator to be positive  
+            A_aug(2, x_start_idx:x_end_idx) = -obj.r_den; % nonnegativitiy -- need to generalize 
+            b_aug = [bound*obj.beta_den - obj.beta_num; obj.beta_den];
         elseif strcmp(obj.problem_type, 'standard')
             A_aug = []; 
             b_aug = []; 
@@ -1166,22 +1192,10 @@ methods (Access = private)
 
             pq = PQ(true); % max priority queue -- new every loop 
 
-            obj.vprintf(1, ['Outer iteration %d,\tglobal lb %0.3f,\t',...
-                                'best cost %0.3f\n'],...
-                                outer_loop_iter, global_lb, mincost);
+            obj.vprintf(1, '\nOuter iteration %d, Combination ', outer_loop_iter); 
+            disp_txt = []; 
 
-            % Print some max bound difs 
-            % For debug just check first 200 motors (and then filter example 2 more)
             for j = 1:num_combinations % Our loop thoufg   
-
-                display(j)
-                disp(ub_list(j) - lb_list(j))
-                % TODO -- some printing 
-                %obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-                %       disp_txt = sprintf('%d of %d, Best Cost: %0.4f',...
-                %         j, num_combinations, mincost);
-                %obj.vprintf(1, disp_txt);
-
                 motor_idx = combos(j, 1);
                 gear_idx = combos(j, 2); 
 
@@ -1193,9 +1207,6 @@ methods (Access = private)
                     gearbox = obj.direct_drive; 
                 end 
 
-
-
-
                 % while not converged on this + break condition below
 
                 % Need each upper and lower bound to approach each other every iter
@@ -1205,10 +1216,6 @@ methods (Access = private)
                      ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
                      (lb_list(j) <= global_ub) 
                    
-                    if isinf(lb_list(j))
-                        error('should not ')
-                    end 
-
                     if (outer_loop_iter == 1) && init_flag 
                         bound = global_ub;
                         init_flag = false; 
@@ -1278,6 +1285,12 @@ methods (Access = private)
                     lb_list(j) = ub_list(j); % so we stop wasting time 
                 end 
 
+                % Prints 
+                obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
+                disp_txt = sprintf(['%d of %d, LB %0.4f,',...
+                                  ' Best Cost %0.4f'],...
+                               j, num_combinations, global_lb, mincost);
+                obj.vprintf(1, disp_txt);
             end 
 
 

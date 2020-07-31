@@ -124,7 +124,7 @@ b = 0;
 % Fill in Torque Constraints 
 % inertial compensation 
 % accounting for par el
-T = @(~, ~) [theta,  ones(n,1), 0.5*cos(theta)*0.3*9.81,  zeros(n, w - 3)]; 
+T = @(~, ~) [theta,  ones(n,1), 5*cos(theta)*0.3*9.81,  zeros(n, w - 3)]; 
 d = @(motor, gearbox) tau_des + omega_dot.*(gearbox.alpha^2)*(motor.inertia + gearbox.inertia); % inertial compensation here and tau_des (does not depend on x )
 
 V_max = 48; % volts  
@@ -154,11 +154,20 @@ problem_data.omega = omega;
 problem_data.I_u = I_u; 
 
 
+r_num = zeros(w, 1); 
+r_num(ec_idx) = 1; 
+r_den = zeros(w, 1);
+r_den(cb_idx) = 1; 
+beta_num = 0;
+beta_den = 0; 
+
+
 problem_data.cost_lb = 0; 
 problem_data.cost_ub = 10; 
-problem_data.num_idx = 4;
-problem_data.den_idx = 3; 
-
+problem_data.r_num = r_num;
+problem_data.r_den = r_den; 
+problem_data.beta_num = beta_num;
+problem_data.beta_den = beta_den; 
 % Solve the problem 
 
 
