@@ -31,6 +31,7 @@ properties (GetAccess = public, SetAccess = private)
     
     settings % for solver, rho, verbose
     rankings % for combos - may want to rename 
+    ranking_matrix 
 
     % ----- Problem Data -- May want more dscriptive names?
     omega
@@ -60,7 +61,8 @@ properties (GetAccess = public, SetAccess = private)
     gearboxes
     test_motor          % for validating input properties 
     test_gearbox        % for validating input properitse 
-    direct_drive        % dummy for no gearbox 
+    num_motors
+    num_gearboxes 
 
     % --- Data specifially for Quasiconvex Problems -----
 
@@ -112,8 +114,7 @@ methods (Access = public)
         load('/home/erez/Documents/MotorSelection/database/maxon_motor_gb_data.mat',...
                     'motor_table', 'gear_table'); 
 
-        obj.motors = motor_table;
-        obj.gearboxes = gear_table;
+
 
         % Load in from database too 
         % also here will need to play around with matlab packaging 
@@ -124,9 +125,37 @@ methods (Access = public)
         obj.test_gearbox = test_gearbox; 
 
 
+        var_names = gear_table.Properties.VariableNames;    % get names 
+        var_types = varfun(@class, gear_table, 'OutputFormat', 'cell'); % get var types
+        % create a copatible 1 row table for direct drive 
+        T_direct_drive = table('Size', [1, numel(var_names)], 'VariableTypes',...
+                                         var_types, 'VariableNames', var_names); 
+
+        % all 'double' properties will be initialized to zeros 
+        T_direct_drive.eta = 1; 
+        T_direct_drive.alpha = 1; 
+        T_direct_drive.mass = 0;  T_direct_drive.inertia = 0;  T_direct_drive.Price = 0;
+        T_direct_drive.Max_cont_torque = inf;
+        T_direct_drive.Max_int_torque = inf;
+        gear_table = [T_direct_drive; gear_table]; % augment with direct drive 
+
+        % Increment ALL of the compatible gear indices AND append 1 to them 
+        % as all are compatible with direct drive dummy gearbox 
+        for j = 1:size(motor_table, 1) 
+            % append a 0 and then increment (since it may be empty)
+            tmp = cell2mat(motor_table.gearboxes(j));
+            new_gear_list = [0; tmp(:)] + 1; 
+            motor_table.gearboxes(j) = {new_gear_list}; 
+        end 
+
+        obj.motors = motor_table;
+        obj.gearboxes = gear_table;
+        obj.num_gearboxes = size(gear_table, 1); 
+        obj.num_motors = size(motor_table, 1); 
+
+
         % TODO - validation on motor/gear set 
-
-
+  
         % Default settings -- NOTE: may want to to be able to instantiate with settings 
         %settings.solver = 'ecos' ; % TODO -- implement other solver 
         settings.solver = 'gurobi' ; % TODO -- implement other solver 
@@ -134,17 +163,10 @@ methods (Access = public)
         settings.rho = 1e-6; 
         settings.verbose = 1; % 0 nothing, 1 some stuff, 2 a lot 
         settings.qcvx_reltol = 1e-3;  % bound tolerance for convergence 
-        settings.qcvx_abstol = 1e-5;  
+        settings.qcvx_abstol = 1e-4;  
         obj.settings = settings; 
 
-           % Creating a 'direct drive' gearbox 
-        direct_drive.inertia = 0;
-        direct_drive.eta = 1; 
-        direct_drive.alpha = 1; 
-        direct_drive.mass = 0; 
-        direct_drive.Max_torque = inf; % Or some other potnetial criteria or this 
-        obj.direct_drive = direct_drive; 
-
+      
         % INITIALIZE OTHER THINGS?
 
         %{
@@ -519,67 +541,16 @@ methods (Access = public)
             num_return = varargin{1};
         end 
 
-        
-
-        % Probably assume from setup 
-        % maybe some prints to help 
-
-
-        % TODO -- this will need to account for hints/rankings 
-        % should incorporate hints/rankings into 1 thing
-
-
-        % Get combinations from filtered list 
-        combos = obj.get_combinations(); 
-
         % NOTE these operations might be slow 
-        % could do this once in the constructor 
         motors = table2struct(obj.motors);
-        gears = table2struct(obj.gearboxes);
-
-
-        % update ranking somewhere 
-
-     
-
-        num_init_combos = size(combos, 1); 
-        obj.vprintf(1, 'Found %d initial feasible combinations\n', num_init_combos);
-
-        % Starting at end of combo list and remove based on velocty 
-        max_output_vel = max(abs(obj.omega)); 
-
-        for j = length(combos):-1:1
-            motor_idx = combos(j, 1); 
-            gear_idx = combos(j, 2); 
-            if  gear_idx ~= 0 
-                max_motor_vel = max_output_vel * gears(gear_idx).alpha;  
-            else 
-                max_motor_vel = max_output_vel;
-            end 
-
-            if max_motor_vel > motors(motor_idx).omega_max
-                combos(j, :) = []; % clear it out 
-            end 
-        end 
-
-        num_updated_combos = size(combos, 1); 
-        obj.vprintf(1, 'Filtering by max velocity removed: %d combinations\n',...
-                 num_init_combos - num_updated_combos);
-        
-
-        combos = combos(1:min(length(combos), 200), :); 
-        warning('remember to comment this debug thing out limiting combos to 200')
+        gearboxes = table2struct(obj.gearboxes);
     
+        % Get combinations from filtered list 
+        init_combos = obj.get_combinations(); 
+        filtered_combos = obj.velocity_filter(init_combos); 
+        combos = obj.apply_rankings(filtered_combos); 
 
-        %%%% Inputs needed beyond this point (for if splitting )
-        % 
-
-
-        %
-        %  in conclusion -- not hard to split into standard solve 
-        %  loop and quasi/fractional solve loop 
-        % 
-
+    
         if strcmp(obj.problem_type, 'standard')  
             obj.vprintf(1, 'Combination: ');
 
@@ -603,20 +574,11 @@ methods (Access = public)
                          j, num_combinations, mincost);
                 obj.vprintf(1, disp_txt);
 
-                motor_idx = combos(j, 1);
-                gear_idx = combos(j, 2); 
-
-                % Create the combination 
-                motor = motors(motor_idx); 
-                if gear_idx > 0
-                    gearbox = gears(gear_idx);
-                else 
-                    gearbox = obj.direct_drive; 
-                end 
+                motor = motors(combos(j, 1));
+                gearbox = gearboxes(combos(j, 2)); 
 
                 [combo_cost, tmp_sol, comp_time] = obj.combo_solve(motor,...
                                              gearbox, cutoff); 
-
 
                 % may keep a seperate pseud-cost list for updating rankings 
                 if ~isinf(combo_cost)
@@ -668,25 +630,7 @@ methods (Access = public)
             error('Invalid problem type. Must be "standard" or "fractional" '); 
         end 
 
-
-
-
-        % ..... these are just numbers in a list so how to link back
-        % up with all acutal possible combos for next solution??
-        % ....
-        %
-        % one way to specify a combo hint would be 
-        % [motor_idx, gear_idx] in the table 
-        % so, rankings will be N x 3 array
-        % first col gives cost 
-        % next col gives motor idx 
-        % next col gives gear idx 
-
-        % then use this to presort 
-
-        [~, rank_idxs] = sort(cost_list);   % Need to index this back in 
-        tmp_table = [cost_list, combos];
-        obj.rankings = tmp_table(rank_idxs, :); 
+        obj.update_rankings(cost_list, combos); 
 
         if isinf(mincost)
             sol_structs = struct(); % empty 
@@ -736,8 +680,6 @@ methods (Access = public)
             motor_idx = i; % For now --- later -- use filtered idxs 
             % indices in gear table 
             compatible_gears = cell2mat(obj.motors.('gearboxes')(motor_idx)); 
-            % Direct drive options 
-            combo_list{end + 1, 1} = [motor_idx, 0]; % direct drive option 
             for j = 1:numel(compatible_gears)
                 % TODO: if 'filtered' this combo may be excluded 
                 gear_idx = compatible_gears(j); 
@@ -746,8 +688,10 @@ methods (Access = public)
         end 
         % convert cell to N x 2 array 
         combo_list = cell2mat(combo_list); 
-        nc = length(combo_list);
 
+        combo_list = combo_list(1:min(length(combo_list), 200), :); 
+        warning('remember to comment this debug thing out limiting combos to 200')
+    
         % maybe add number of distinct motors and gearboxes too 
         %if obj.settings.verbose; fprintf('%d total combinations'); end 
 
@@ -755,24 +699,101 @@ methods (Access = public)
     
 
 
+
+    function new_combos = velocity_filter(obj, combos)
+    %
+    %
+    %
+        motors = table2struct(obj.motors);
+        gears = table2struct(obj.gearboxes);
+
+        num_init_combos = size(combos, 1); 
+        obj.vprintf(1, 'Found %d initial feasible combinations\n', num_init_combos);
+
+        % Starting at end of combo list and remove based on velocty 
+        max_output_vel = max(abs(obj.omega)); 
+
+        for j = length(combos):-1:1
+            motor_idx = combos(j, 1); 
+            gear_idx = combos(j, 2); 
+
+            max_motor_vel = max_output_vel * gears(gear_idx).alpha;  
+            if max_motor_vel > motors(motor_idx).omega_max
+                combos(j, :) = []; % clear it out 
+            end 
+        end 
+        new_combos = combos; 
+
+
+        num_updated_combos = size(combos, 1); 
+        obj.vprintf(1, 'Filtering by max velocity removed: %d combinations\n',...
+                            num_init_combos - num_updated_combos);
+    end 
+
+
+
+
+
+    function update_rankings(obj, cost_list, combos)
+    %
+    %
+    %
+
+        % May be called by user so add validation
+        cost_list = cost_list(:); 
+
+        assert(size(combos, 1) == length(cost_list),...
+                 'Number of combinations must match length of costs');
+        assert(size(combos, 2) == 2, 'Combinations must be 2xN matrix'); 
+
+        [~, rank_idxs] = sort(cost_list);   % Need to index this back in 
+        tmp_table = [cost_list, combos];
+        obj.rankings = tmp_table(rank_idxs, :); 
+
+        % row - motor idx, col - gear idx, val = ranking - 0 is flag for inf 
+        ranking_matrix = sparse(combos(:, 1), combos(:, 2), cost_list,...
+                                     obj.num_motors, obj.num_gearboxes); 
+        obj.ranking_matrix = ranking_matrix; 
+    end 
+
     % NOTE: some plotting methods could be good 
     % Selection Filtering?
     % Private methods? 
-
-
 
     % Function to CLEAR FILTERS on motor/gb -- go back to original 
     % ...this would probably clear any motor/gb that was manually added
     % no great way around this 
 
-    % cant think of need to copy 
-    %function actuatorCopy = ActCopy(obj)
-    %    actuatorCopy = obj.copy();
-    %end
 end % end public methods 
 
 
 methods (Access = private)
+
+    function ranked_combos = apply_rankings(obj, combos)
+    %
+    %
+    %
+    
+        % if no rankings, just return
+        if nnz(obj.ranking_matrix) == 0
+            ranked_combos = combos;
+            return;
+        end 
+
+        ranked_combos = zeros(size(combos) + [0, 1]);  % extra col 
+        num_combos = size(combos, 1);
+        % O(n) -- get all the rankings  
+        for j = 1:num_combos
+            motor_idx = combos(j, 1);
+            gear_idx = combos(j, 2);  
+            ranking = obj.ranking_matrix(motor_idx, gear_idx); 
+            ranked_combos(j, :) = [ranking, motor_idx, gear_idx]; 
+        end 
+        % O(nlogn) -- sort by the rankings 
+        [~, sort_idxs] = sort(ranked_combos(:, 1)); 
+        ranked_combos = ranked_combos(sort_idxs, :); 
+    end 
+
 
 
     function [combo_cost, sol, solve_time] = combo_solve(obj, motor, gearbox,...
@@ -1161,15 +1182,15 @@ methods (Access = private)
     %
     %
 
-        % TODO -- incorporate rankings 
+        % Initial ranking handled by reorganizing combos in caller 
 
 
         % Would be cool animation to see all the
-                    % individual lower and upper bounds change 
-                    % would need some logging 
+        % individual lower and upper bounds change 
+        % would need some logging 
 
         motors = table2struct(obj.motors);
-        gears = table2struct(obj.gearboxes);
+        gearboxes = table2struct(obj.gearboxes);
         mincost = inf; % no feasible solution yet 
 
         global_ub = obj.cost_ub;   % global upper bound for solution POOL 
@@ -1196,21 +1217,11 @@ methods (Access = private)
             disp_txt = []; 
 
             for j = 1:num_combinations % Our loop thoufg   
-                motor_idx = combos(j, 1);
-                gear_idx = combos(j, 2); 
-
-                % Create the combination 
-                motor = motors(motor_idx); 
-                if gear_idx > 0
-                    gearbox = gears(gear_idx);
-                else 
-                    gearbox = obj.direct_drive; 
-                end 
+                motor = motors(combos(j, 1));
+                gearbox = gearboxes(combos(j, 2));
 
                 % while not converged on this + break condition below
-
                 % Need each upper and lower bound to approach each other every iter
-
                 init_flag = true;  
                 while ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_abstol) && ...
                      ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
@@ -1293,8 +1304,6 @@ methods (Access = private)
                 obj.vprintf(1, disp_txt);
             end 
 
-
-
             bnd_diff = ub_list - lb_list; 
             rel_bound_diff = bnd_diff./max(ub_list, abs(lb_list));
             max_abs_bnd_diff = max(bnd_diff);   % inf - inf = nan
@@ -1315,7 +1324,8 @@ methods (Access = private)
         end 
         cost_list = ub_list; % NOTE: no pseudocost incorporated here 
 
-        % ALSO -- Return some exit criteria info 
+
+        % NOTE: -- Return some exit criteria info 
         % no feasible 
         % rel diff met 
         % abs diff met 
