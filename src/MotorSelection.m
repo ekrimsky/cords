@@ -689,8 +689,8 @@ methods (Access = public)
         % convert cell to N x 2 array 
         combo_list = cell2mat(combo_list); 
 
-        combo_list = combo_list(1:min(length(combo_list), 200), :); 
-        warning('remember to comment this debug thing out limiting combos to 200')
+        %combo_list = combo_list(1:min(length(combo_list), 200), :); 
+        %wwarning('remember to comment this debug thing out limiting combos to 200')
     
         % maybe add number of distinct motors and gearboxes too 
         %if obj.settings.verbose; fprintf('%d total combinations'); end 
