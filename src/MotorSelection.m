@@ -80,6 +80,9 @@ properties (GetAccess = public, SetAccess = private)
     r_den
     beta_num
     beta_den
+
+
+    % Friction and other model settings? 
 end 
 
 
@@ -502,6 +505,7 @@ methods (Access = public)
         obj.d = d; 
         obj.omega = omega;
         obj.omega_dot = omega_dot; 
+        obj.zero_vel_idxs = find(omega == 0); 
         obj.I_u = I_u; 
         obj.lin_ineq = lin_ineq; 
 
@@ -848,28 +852,28 @@ methods (Access = private)
         p = obj.p;
         m = obj.m; 
 
+        zero_vel_idxs = obj.zero_vel_idxs; 
+        nzvi = length(zero_vel_idxs); 
+
+        % NOTE the distinction at omega = 0 (also, could precomp)
+        sign_omega = sign(omega); 		% = 0 if omega = 0 
+        so = round(sign_omega + 0.1); 	% = 1 if omega = 0  
 
 
-        % TODO -- decide how best to handle zero velocities 
-        so = sign(omega + eps); 
+        % Friction and Inertia 
 
-        % TODO -- this allows us to use differnt friction models 
-        % note no sign flip here??????????????????
-        %I_nl = obj.no_load_torque(omega);
-        % TODO -- option for other modoel to not take I_nl directly 
-        I_nl = motor.I_nl * ones(n, 1);  % TODO -- change to tau loss 
+        % TODO -- whats the best general way to handle static friction
+        % Should there be a call to a function which determines 
+        % friction model based of settings? 
+        tau_friction_static = 1.1 * k_t * motor.I_nl;  
 
-        % Loss Torque on Motor -- Friction and Inertia 
-        tau_friction = k_t * motor.I_nl * so; % NOTE: Incorp other friction models 
+        tau_friction = k_t * motor.I_nl * sign_omega; % NOTE: Incorp other friction models 
         tau_motor_inertia = motor.inertia * (alph^2) * omega_dot; 
-        % Motor Friction and Inertia Compensation  (f - fric, j- inerits )
+        
+  		% Dynamic Motor Friction and Inertia Compensation  (f - fric, j- inerits )
         tau_mfj = tau_friction + tau_motor_inertia; 
         I_comp = tau_mfj/k_t; % corresponding current 
-        % TODO -- motor inertia compensation 
-        % TODO -- gearbox inertia compensation 
 
-
-        
 
         % Index Map for Optimization 
         I_start_idx = 1;
@@ -883,9 +887,9 @@ methods (Access = private)
         In_end_idx = 3*n; 
 
         if eta < 1 
-            dim_y = w + 5*n;  % total dimension of opt vector 
+            dim_y = 5*n + w + nzvi;  % total dimension of opt vector 
         else 
-            dim_y = 3*n + w; 
+            dim_y = 3*n + w + nzvi; 
         end 
 
         lb = -inf(dim_y, 1); 
@@ -926,9 +930,6 @@ methods (Access = private)
             b_eq_tau_x = d + alph*(eta + 1/eta)*I_comp; 
 
 
-            A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau_x]; 
-            b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau_x]; 
-
 
             % Ineqaulity constraints containting multiple variables 
             % (if one variable, more computationally efficient to handle with bound
@@ -950,9 +951,6 @@ methods (Access = private)
             % and upper bound I_u + I_nl 
             % If sign(omega) = -1, upper bound on gm is -I_nl 
             % lower bound is -I_u - I_nl 
-
-            % do due accels, could have I_comp negative but omega > 0 
-            % 
 			lb(gm_start_idx:gm_end_idx) = min(I_comp,  I_comp + (so.*I_u));
             ub(gm_start_idx:gm_end_idx) = max(I_comp,  I_comp + (so.*I_u));
 
@@ -960,25 +958,61 @@ methods (Access = private)
             % If sign(omega) = 1, upper bound on mu is I_nl
             % and lower bound -I_u + I_nl 
             % If sign(omega) = -1, lower bound on mu is -I_nl 
-            % upper bound is I_u - I_nl      
-			lb(mu_start_idx:mu_end_idx) = min(I_comp,  I_comp - (so.*I_u));
-            ub(mu_start_idx:mu_end_idx) = max(I_comp,  I_comp - (so.*I_u));
+            % upper bound is I_u - I_nl
+            % We force mu = I_comp when omega = 0 (hence sign_omega instead of so)      
+			lb(mu_start_idx:mu_end_idx) = min(I_comp,...
+										  I_comp - (sign_omega.*I_u));
+            ub(mu_start_idx:mu_end_idx) = max(I_comp,...
+            							  I_comp - (sign_omega.*I_u));
         else   % Direct drive or fully efficient gearbox 
             x_start_idx = 3*n + 1; 
             x_end_idx = x_start_idx + w - 1; 
 
+           
             A_eq_tau_x = zeros(n, dim_y);    % sparse? 
             A_eq_tau_x(:, x_start_idx:x_end_idx) = -T; 
             A_eq_tau_x(:, I_start_idx:I_end_idx) = alph*k_t*eye(n);
-            %b_eq_tau_x = d + alph*k_t*so.*I_nl; 
             b_eq_tau_x = d + alph*k_t*I_comp; 
 
-            A_eq_tau = [A_eq_tau1; A_eq_tau_x]; 
-            b_eq_tau = [b_eq_tau1; b_eq_tau_x]; 
+            A_eq_tau2 = []; 
+            b_eq_tau2 = []; 
 
             A_ineq_tau = [];
             b_ineq_tau = []; 
         end 
+
+    
+ 		% Zero Vel - Use Static Friction 
+        zv_start_idx = x_end_idx + 1; 
+        zv_end_idx = x_end_idx + nzvi - 1; 
+
+        if nzvi > 0 
+        	% TODO -- probably consider gb fully efficient at zero vel?
+        	% think through a little more (but then just alpha on next line)
+            A_eq_tau_x(zero_vel_idxs, zv_start_idx:zv_end_idx) = alph;
+
+            % Overwrite the other zero vel points, treat gb as fully eff 
+            if eta < 1
+            	A_eq_tau_x(zero_vel_idxs, gm_start_idx:gm_end_idx) = alph*k_t;
+            	A_eq_tau_x(zero_vel_idxs, mu_start_idx:mu_end_idx) = 0;
+            	b_eq_tau_x(zero_vel_idxs) = d(zero_vel_idxs) + alph*k_t*I_comp(zero_vel_idxs);
+            end 
+
+            % Friction Cone 
+            A_ineq_zv = zeros(2*nzvi, dim_y);
+            A_ineq_zv(1:nzvi, zv_start_idx:zv_end_idx) = 1; 
+            A_ineq_zv(nzvi + (1:nzvi), zv_start_idx:zv_end_idx) = -1; 
+            b_ineq_zv = tau_friction_static * ones(2*nzvi, 1);
+
+            A_ineq_tau = [A_ineq_tau; A_ineq_zv];
+            b_ineq_tau = [b_ineq_tau; b_ineq_zv];
+        end 
+
+
+        A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau_x];
+        b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau_x];
+
+
 
         % Fill in variable bounds on I, Ip, In 
         lb(I_start_idx:I_end_idx) = -I_u; 
@@ -989,7 +1023,6 @@ methods (Access = private)
 
         lb(In_start_idx:In_end_idx) = 0; 
         ub(In_start_idx:In_end_idx) = I_u; 
-
 
         % First index torque constraints into it
         if ~isempty(H)
@@ -1199,6 +1232,7 @@ methods (Access = private)
 
         elseif strcmpi(obj.settings.solver, 'sedumi')
             error('havent writen sedumi solving yet')
+            % SDPT3? 
             % make sure to account for bound/LP cone constraints
         else
             error('invalid solver')
@@ -1213,6 +1247,7 @@ methods (Access = private)
 
 
         % TODO Some debug verifcation that is usually skipped 
+        % TODO decompositon of results 
     end 
 
 

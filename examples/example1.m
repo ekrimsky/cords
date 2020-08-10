@@ -113,12 +113,9 @@ I_max = 100;  % Amps
 
 % Fill in Bound Constraints 
 % account for voltage and current limits 
-
-
-% TODO -- add k_e as a redundant motor property for more readable code -- then edits this to ke 
 I_u = @(motor, gearbox) min(I_max,...
-         (1/motor.R)*min(abs(V_max + motor.k_t*gearbox.alpha.*omega),...
-               abs(V_max + motor.k_t*gearbox.alpha.*omega) ) ); 
+         (1/motor.R)*min(abs(V_max + motor.k_e*gearbox.alpha.*omega),...
+               abs(V_max + motor.k_e*gearbox.alpha.*omega) ) ); 
 
 % Assign all to the same struct 
 problem_data.Q = Q;
