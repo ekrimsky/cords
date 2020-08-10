@@ -35,6 +35,9 @@ properties (GetAccess = public, SetAccess = private)
 
     % ----- Problem Data -- May want more dscriptive names?
     omega
+    omega_dot 
+    % indices in omega corresponding to omega == 0 
+    zero_vel_idxs  	% computed once for each inputs to help solve time 
     Q
     c
     M   % can encode SOCP  
@@ -111,16 +114,20 @@ methods (Access = public)
         % NOTE: could have default directory to look for path 
         % and the option to change that path to load in from elswhere 
 
-        load('/home/erez/Documents/MotorSelection/database/maxon_motor_gb_data.mat',...
+
+        % TODO -- make finding these files robust 
+        %load('/home/erez/Documents/MotorSelection/database/maxon_motor_gb_data.mat',...
+        %            'motor_table', 'gear_table'); 
+
+        load('database/maxon_motor_gb_data.mat',...
                     'motor_table', 'gear_table'); 
-
-
 
         % Load in from database too 
         % also here will need to play around with matlab packaging 
-        load('/home/erez/Documents/MotorSelection/database/test_vals.mat',...
-                    'test_motor', 'test_gearbox'); 
-
+        %load('/home/erez/Documents/MotorSelection/database/test_vals.mat',...
+        %            'test_motor', 'test_gearbox'); 
+        load('database/test_vals.mat',...
+                    'test_motor', 'test_gearbox');
         obj.test_motor = test_motor;
         obj.test_gearbox = test_gearbox; 
 
@@ -131,7 +138,11 @@ methods (Access = public)
         T_direct_drive = table('Size', [1, numel(var_names)], 'VariableTypes',...
                                          var_types, 'VariableNames', var_names); 
 
-        % all 'double' properties will be initialized to zeros 
+        % all 'double' properties will be initialized to zeros
+
+        % TODO -- Move this direct drive stuff and other database
+        % aspects to an external code, will make things easier to manage
+        % perhaps its own class??? (copyable) 
         T_direct_drive.eta = 1; 
         T_direct_drive.alpha = 1; 
         T_direct_drive.mass = 0;  T_direct_drive.inertia = 0;  T_direct_drive.Price = 0;
@@ -193,19 +204,6 @@ methods (Access = public)
     %**********************************************************************
     function update_problem(obj, problem_data, varargin)
         
-        % Variable input only for qcvx ojective 
- 
-        % bounds: ub, lb 
-        % call this input - "factional"
-        % Needs to have all 4 fields 
-        % CHECK IF EXTRA ARG NO EMPTY
-
-        % If quasi -- the cost objectives
-        % need to be empty -- put this in as a check
-        % if not quasi -- nan out the quasi terms 
-
-
-
         assert(isfield(problem_data, 'omega'), 'Missing omega');
         assert(isfield(problem_data, 'Q'), 'Missing Q');
         assert(isfield(problem_data, 'c'), 'Missing c');
@@ -217,6 +215,8 @@ methods (Access = public)
         assert(isfield(problem_data, 'T'), 'Missing T');
         assert(isfield(problem_data, 'd'), 'Missing d');
         assert(isfield(problem_data, 'I_u'), 'Missing I_u');
+
+
 
 
 
@@ -236,7 +236,7 @@ methods (Access = public)
         d = problem_data.d; 
         I_u = problem_data.I_u; 
 
-        n = length(omega); % Need to 
+        n = length(omega);  
         m = numel(Q) - 1; 
 
 
@@ -279,6 +279,17 @@ methods (Access = public)
         assert(length(I_u_test) == n, 'I_u incorrect length');
         assert(~isinf(max(I_u_test)), 'I_u must be finite'); 
         assert(min(I_u_test) > 0, 'I_u must be strictly positive'); 
+
+        %% Check for optional inputs -- Acceleration 
+
+        if isfield(problem_data, 'omega_dot')
+        	omega_dot = problem_data.omega_dot(:); 
+        	assert(length(omega_dot) == n,...
+        		 	'omega and omega_dot must be same size'); 
+        else 
+        	omega_dot = zeros(n, 1); % treat as zero
+        end 
+
 
         
         % when f_j is encoding linear inequality -- its more  
@@ -490,6 +501,7 @@ methods (Access = public)
         obj.T = T; 
         obj.d = d; 
         obj.omega = omega;
+        obj.omega_dot = omega_dot; 
         obj.I_u = I_u; 
         obj.lin_ineq = lin_ineq; 
 
@@ -814,31 +826,50 @@ methods (Access = private)
         % 
         % SOCP implicit for Gurobi solve (looks like a stanrd QCQP)
         omega = obj.omega; 
+        omega_dot = obj.omega_dot; % may be all zeros 
+
+        eta = gearbox.eta; 
+        alph = gearbox.alpha; 
+        k_t = motor.k_t; 
 
         H = obj.H(motor, gearbox);
         b = obj.b(motor, gearbox);
 
         T = obj.T(motor, gearbox);
-        d = obj.d(motor, gearbox);
+        tau_gearbox_inertia = gearbox.inertia * (alph^2) * omega_dot; 
+        d = obj.d(motor, gearbox) + tau_gearbox_inertia;
 
-        eta = gearbox.eta; 
-        alph = gearbox.alpha; 
-        k_t = motor.k_t; 
+        
         I_u = obj.I_u(motor, gearbox);  % symmetric bounds, dont need I_l
+
 
         n = obj.n; 
         w = obj.w;
         p = obj.p;
         m = obj.m; 
 
+
+
+        % TODO -- decide how best to handle zero velocities 
+        so = sign(omega + eps); 
+
         % TODO -- this allows us to use differnt friction models 
         % note no sign flip here??????????????????
         %I_nl = obj.no_load_torque(omega);
         % TODO -- option for other modoel to not take I_nl directly 
-        I_nl = motor.I_nl * ones(n, 1);
+        I_nl = motor.I_nl * ones(n, 1);  % TODO -- change to tau loss 
 
-        % TODO -- decide how best to handle zero velocities 
-        so = sign(omega + eps); 
+        % Loss Torque on Motor -- Friction and Inertia 
+        tau_friction = k_t * motor.I_nl * so; % NOTE: Incorp other friction models 
+        tau_motor_inertia = motor.inertia * (alph^2) * omega_dot; 
+        % Motor Friction and Inertia Compensation  (f - fric, j- inerits )
+        tau_mfj = tau_friction + tau_motor_inertia; 
+        I_comp = tau_mfj/k_t; % corresponding current 
+        % TODO -- motor inertia compensation 
+        % TODO -- gearbox inertia compensation 
+
+
+        
 
         % Index Map for Optimization 
         I_start_idx = 1;
@@ -882,15 +913,18 @@ methods (Access = private)
             A_eq_tau2 = zeros(n, dim_y);   % sparse? 
             A_eq_tau2(:, gm_start_idx:gm_end_idx) = eye(n);
             A_eq_tau2(:, mu_start_idx:mu_end_idx) = eye(n);
+            % TODO -- remove current from the formulation 
             A_eq_tau2(:, I_start_idx:I_end_idx) = -eye(n);
-            b_eq_tau2 = so .* I_nl; 
+            b_eq_tau2 = I_comp; 
 
             % Tx + d = motor/gearbox torque 
             A_eq_tau_x = zeros(n, dim_y);    % sparse? 
             A_eq_tau_x(:, x_start_idx:x_end_idx) = -T; 
             A_eq_tau_x(:, gm_start_idx:gm_end_idx) = alph*eta*k_t*eye(n);
             A_eq_tau_x(:, mu_start_idx:mu_end_idx) = (alph*k_t/eta)*eye(n);
-            b_eq_tau_x = d + alph*k_t*(eta + 1/eta)*so.*I_nl; 
+            %b_eq_tau_x = d + alph*k_t*(eta + 1/eta)*so.*I_nl; 
+            b_eq_tau_x = d + alph*(eta + 1/eta)*I_comp; 
+
 
             A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau_x]; 
             b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau_x]; 
@@ -901,29 +935,34 @@ methods (Access = private)
             % constraints )
 
             % sign(omega)*(gamma- mu) - I_nl - Ip - In <= 0 
-            A_ineq_tau = zeros(n, dim_y); 
+            A_ineq_tau = zeros(n, dim_y);  
             A_ineq_tau(:, gm_start_idx:gm_end_idx) = diag(so);
             A_ineq_tau(:, mu_start_idx:mu_end_idx) = -diag(so);
             A_ineq_tau(:, Ip_start_idx:Ip_end_idx) = -eye(n);
-            A_ineq_tau(:, In_start_idx:In_end_idx) = -eye(n); 
-            b_ineq_tau = I_nl; 
+            A_ineq_tau(:, In_start_idx:In_end_idx) = -eye(n);  
+            b_ineq_tau = so.*I_comp; 
+
 
             % Bounds on individual variables (ie. box constraints)
+            % TODO -- what happens with infeasibly large accelerations 
+            % where I_comp is very big??? (and causes to exceed limits)
             % If sign(omega) = 1, lower bound on gm is I_nl
             % and upper bound I_u + I_nl 
             % If sign(omega) = -1, upper bound on gm is -I_nl 
             % lower bound is -I_u - I_nl 
-            lb(gm_start_idx:gm_end_idx) = min(so.*I_nl,  so.*(I_nl + I_u));
-            ub(gm_start_idx:gm_end_idx) = max(so.*I_nl,  so.*(I_nl + I_u));
+
+            % do due accels, could have I_comp negative but omega > 0 
+            % 
+			lb(gm_start_idx:gm_end_idx) = min(I_comp,  I_comp + (so.*I_u));
+            ub(gm_start_idx:gm_end_idx) = max(I_comp,  I_comp + (so.*I_u));
+
 
             % If sign(omega) = 1, upper bound on mu is I_nl
             % and lower bound -I_u + I_nl 
             % If sign(omega) = -1, lower bound on mu is -I_nl 
             % upper bound is I_u - I_nl      
-            % TODO -- double check 
-            lb(mu_start_idx:mu_end_idx) = min(so.*I_nl,  so.*(I_nl - I_u));
-            ub(mu_start_idx:mu_end_idx) = max(so.*I_nl,  so.*(I_nl - I_u));
-
+			lb(mu_start_idx:mu_end_idx) = min(I_comp,  I_comp - (so.*I_u));
+            ub(mu_start_idx:mu_end_idx) = max(I_comp,  I_comp - (so.*I_u));
         else   % Direct drive or fully efficient gearbox 
             x_start_idx = 3*n + 1; 
             x_end_idx = x_start_idx + w - 1; 
@@ -931,7 +970,8 @@ methods (Access = private)
             A_eq_tau_x = zeros(n, dim_y);    % sparse? 
             A_eq_tau_x(:, x_start_idx:x_end_idx) = -T; 
             A_eq_tau_x(:, I_start_idx:I_end_idx) = alph*k_t*eye(n);
-            b_eq_tau_x = d + alph*k_t*so.*I_nl; 
+            %b_eq_tau_x = d + alph*k_t*so.*I_nl; 
+            b_eq_tau_x = d + alph*k_t*I_comp; 
 
             A_eq_tau = [A_eq_tau1; A_eq_tau_x]; 
             b_eq_tau = [b_eq_tau1; b_eq_tau_x]; 
@@ -1170,6 +1210,9 @@ methods (Access = private)
         sol.x = y_sol(x_start_idx:x_end_idx); 
 
         solve_time = 100; % TODO 
+
+
+        % TODO Some debug verifcation that is usually skipped 
     end 
 
 

@@ -105,7 +105,7 @@ b = [];
 % inertial compensation 
 % accounting for par el
 T = @(~, ~) [theta,  ones(n,1), zeros(n, w - 2)]; 
-d = @(motor, gearbox) tau_des + omega_dot.*(gearbox.alpha^2)*(motor.inertia + gearbox.inertia); % inertial compensation here and tau_des (does not depend on x )
+d = @(~, ~) tau_des;   % inertial compensation done in optimizer 
 
 V_max = 48; % volts  
 I_max = 100;  % Amps 
@@ -131,6 +131,7 @@ problem_data.b = b;
 problem_data.T = T;
 problem_data.d = d;
 problem_data.omega = omega; 
+problem_data.omega_dot = omega_dot; 
 problem_data.I_u = I_u; 
 
 
