@@ -30,14 +30,10 @@ clearvars; clc;
 % Get Trajectory Data 
 
 
-%....fill in  
 
-% defining a desired trajectory under gravity 
-
-% Fill in with rando stuff -- TODO - load in from file 
 
 % TODO -- package up so can refenerence correctly 
-load('example1_input_data.mat', 'time',  'theta', 'omega',...
+load('example2_input_data.mat', 'time',  'theta', 'omega',...
                                 'omega_dot', 'tau_des'); 
 theta = theta(:); % col vec
 omega = omega(:);
@@ -45,6 +41,122 @@ omega_dot = omega_dot(:);
 time = time(:); 
 tau_des = tau_des(:); 
 n = length(time); 
+
+
+% Need robot data -- including firction coefficient 
+% and maybe a stiffness for impulse models 
+
+N_mot = 8; % 2 motors for each leg 
+%
+%
+%
+%  Optimization Vector Setup 
+%
+%
+%   x = [m_b                - Battery Mass 
+%        e_gc               - Energy consumed per gait cycle 
+%        p  \in R^(8 x N)   - Power consumed at each time point 
+%        F_LH
+%        F_LF
+%        F_RH
+%        F_RF
+%           ]
+
+% Define indices 
+
+
+
+
+% Plot up here showing how it looks? 
+
+
+
+
+
+% Define 4 Jacobians ?
+
+
+%
+%
+%      Dynamics -- Solving for Ground Reaction Forces 
+%
+%
+%
+
+
+% Sum Forces in Z
+
+% Sum Forces in X 
+
+% Sum Moments About Y
+
+%
+%
+%       Torques -- Map GRFs and Dynamics into Desired
+%               motor torques. 
+%
+%
+
+
+
+
+
+%
+%
+%     Power Consumption
+%
+%
+
+
+
+%
+%
+%   Linear Fractional Objective
+%
+%
+
+
+% Map Forces to Torques (in T matrix)
+
+
+
+
+% Mapping Forces to torques through equality constraints 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
