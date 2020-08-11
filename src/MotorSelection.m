@@ -92,10 +92,10 @@ methods (Access = public)
     %**********************************************************************
     % Constructor for the class. 
     %
-    % Required Inputs: 
+ 	% 	Optional Inputs (in order)
     %  
     %
-    % Optional Inputs ('name' - value pairs):
+    % 
     %
     %
     % Returns:
@@ -108,8 +108,51 @@ methods (Access = public)
         % Can call the update problem later if want to instantiate with 
         % problem 
 
+        % Default settings -- NOTE: may want to to be able to instantiate with settings 
+        if ~isempty(varargin)
+        	settings = varargin{1};  % then validate 
+        else 
+        	settings = struct(); 
+        end 
 
+        % Fill in default settings 
+        if ~isfield(settings, 'rho'); settings.rho = 1e-6; end
+        if ~isfield(settings, 'verbose'); settings.verbose = 1; end 
+        if ~isfield(settings, 'qcvx_reltol')
+        	settings.qcvx_reltol = 1e-3; 
+        end 
+        if ~isfield(settings, 'qcxabstol')
+        	settings.qcvx_abstol = 1e-4; 
+        end 
 
+        valid_solvers = {'gurobi', 'ecos', 'sedumi'};
+        has_gurobi = ~isempty(which('gurobi.m'));
+        has_ecos = ~isempty(which('ecos.m'));
+        has_sedumi = ~isempty(which('sedumi.m'));
+
+        if ~isfield(settings, 'solver')
+        	settings.solver = 'gurobi'; % default, fastest
+        end
+
+        if strcmp(settings.solver, 'gurobi')
+        	if ~has_gurobi
+        		settings.solver = 'ecos';
+        		warning('Gurobi solver not found');
+        	end 
+        end 
+        if strcmp(settings.solver, 'ecos')
+        	if ~has_ecos
+        		settings.solver = 'sedumi';
+        		warning('ECOS solver not found');
+        	end 
+        end 
+        if strcmp(settings.solver, 'sedumi')
+        	if ~has_sedumi
+        		error('No valid solvers found in path');
+        	end 
+        end 
+
+        obj.settings = settings; 
         % Assign the default motor and gear tables from some directory? 
         % https://www.mathworks.com/help/matlab/matlab_oop/scoping-classes-with-packages.html
         % FOR NOW --- hard coding in location but when package
@@ -170,15 +213,7 @@ methods (Access = public)
 
         % TODO - validation on motor/gear set 
   
-        % Default settings -- NOTE: may want to to be able to instantiate with settings 
-        %settings.solver = 'ecos' ; % TODO -- implement other solver 
-        settings.solver = 'gurobi' ; % TODO -- implement other solver 
 
-        settings.rho = 1e-6; 
-        settings.verbose = 1; % 0 nothing, 1 some stuff, 2 a lot 
-        settings.qcvx_reltol = 1e-3;  % bound tolerance for convergence 
-        settings.qcvx_abstol = 1e-4;  
-        obj.settings = settings; 
 
       
         % INITIALIZE OTHER THINGS?
@@ -897,9 +932,9 @@ methods (Access = private)
 
         %  Ip - In = I 
         A_eq_tau1 = zeros(n, dim_y);    % sparse? 
-        A_eq_tau_1(:, Ip_start_idx:Ip_end_idx) = eye(n);
-        A_eq_tau_1(:, In_start_idx:In_end_idx) = -eye(n);
-        A_eq_tau_1(:, I_start_idx:I_end_idx) = -eye(n);
+        A_eq_tau1(:, Ip_start_idx:Ip_end_idx) = eye(n);
+        A_eq_tau1(:, In_start_idx:In_end_idx) = -eye(n);
+        A_eq_tau1(:, I_start_idx:I_end_idx) = -eye(n);
         b_eq_tau1 = zeros(n, 1); 
 
         if eta < 1 
@@ -1183,7 +1218,6 @@ methods (Access = private)
 
         c_cost = c_cost_init + c_rho_aug;
 
-
         if strcmpi(obj.settings.solver, 'gurobi')
             %% Gurobi Model 
             model.A = A_all;
@@ -1218,24 +1252,42 @@ methods (Access = private)
                 y_sol = nan(dim_y, 1); 
                 combo_cost = inf; 
             end 
-        elseif strcmpi(obj.settings.solver, 'ecos') 
-            result = ecos_solve(Q_cost, c_cost, beta0, A_eq, b_eq,...
-                            A_ineq, b_ineq, quadcon, lb, ub,  cutoff);
+        elseif strcmpi(obj.settings.solver, 'ecos') || ...
+        			      strcmpi(obj.settings.solver, 'sedumi')
 
-            if ~isinf(result.objval)
-                y_sol = result.x; 
-                combo_cost = result.objval - c_rho_aug'*y_sol; 
-            else
-                y_sol = nan(dim_y, 1); 
-                combo_cost = inf;  
-            end 
+			[c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc] = prep_socp(Q_cost,...
+						c_cost, beta0, A_eq, b_eq, A_ineq, b_ineq, quadcon,...
+						 				 lb, ub,  cutoff);
 
-        elseif strcmpi(obj.settings.solver, 'sedumi')
-            error('havent writen sedumi solving yet')
-            % SDPT3? 
-            % make sure to account for bound/LP cone constraints
+			if strcmpi(obj.settings.solver, 'ecos')
+
+				result = ecos_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc);
+
+				% ...maybe copy outside if for reuse? 
+	            if ~isinf(result.objval)
+	                y_sol = result.x; 
+	                combo_cost = result.objval - c_rho_aug'*y_sol; 
+	            else
+	                y_sol = nan(dim_y, 1); 
+	                combo_cost = inf;  
+	            end 
+
+			else % SEDUMI 
+
+				result = sedumi_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc);
+
+				% ...maybe copy outside if for reuse? 
+	            if ~isinf(result.objval)
+	                y_sol = result.x; 
+	                combo_cost = result.objval - c_rho_aug'*y_sol; 
+	            else
+	                y_sol = nan(dim_y, 1); 
+	                combo_cost = inf;  
+	            end 
+			
+			end 
         else
-            error('invalid solver')
+            error('invalid solver'); % shouldnt be possible 
         end 
 
         %% Parse solutons 
