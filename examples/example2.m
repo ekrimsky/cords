@@ -34,10 +34,61 @@ clearvars; clc;
 % TODO -- package up so can refenerence correctly 
 load('example2_input_data.mat',...
          'time', ...
-          'theta',...
-           'omega',...
-         'omega_dot',...
-          'tau_des'); 
+         'l_body',... % robot length (front to back shouler)
+         'l1',... % shoulder to knee link length 
+         'l2',... % knee to foot link length 
+         'theta_com',... % robot orientation trajectory 
+         'theta_com_dot',... % robot angular vel
+         'theta_com_ddot',... % robot angular accel
+         'x_com',...        % x com trajectory 
+         'x_com_dot',...    % robot x vel
+         'x_com_ddot',...   % robot x accel
+         'z_com',....       % z com trajetory 
+         'z_com_dot',...    % robot z vel 
+         'z_com_ddot',...   % robot z accel 
+         'theta_rfs',... % right front shoulder 
+         'theta_rfk',... % right front knee
+         'theta_rhs',... % right hind shoulder 
+         'theta_rhk',... % right hind knee 
+         'theta_lfs',... % left front shoulder 
+         'theta_lfk',... % left front knee
+         'theta_lhs',... % left hind shoulder 
+         'theta_lhk',... % left hind knee 
+        % OK? 
+         'omega_rfs',... % right front shoulder 
+         'omega_rfk',... % right front knee
+         'omega_rhs',... % right hind shoulder 
+         'omega_rhk',... % right hind knee 
+         'omega_lfs',... % left front shoulder 
+         'omega_lfk',... % left front knee
+         'omega_lhs',... % left hind shoulder 
+         'omega_lhk',... % left hind knee 
+         % Can I comment like this 
+         'omega_dot_rfs',... % right front shoulder 
+         'omega_dot_rfk',... % right front knee
+         'omega_dot_rhs',... % right hind shoulder 
+         'omega_dot_rhk',... % right hind knee 
+         'omega_dot_lfs',... % left front shoulder 
+         'omega_dot_lfk',... % left front knee
+         'omega_dot_lhs',... % left hind shoulder 
+         'omega_dot_lhk',... % left hind knee 
+         % Foot placements 
+         'RF_x',...
+         'RF_z',...
+         'RH_x',...
+         'RH_z',...
+         'LF_x',...
+         'LF_z',...
+         'LH_x',...
+         'LH_z',...
+         % Foot relative to shoulder for computing moments 
+         'del_RF_x',...
+         'del_RH_x',...
+         'del_LF_x',...
+         'del_LH_x',...
+         ); 
+         
+
 
 
 %
@@ -45,90 +96,85 @@ load('example2_input_data.mat',...
 %
 %
 %
-
-
-% all the angles 
-
 g = 9.81; % m/s^2 
+mu = 0.5;       % footpad friction coefficeint 
+m_frame = 2;    % kg
+J_frame = 0;    % kg*m^2 
+% Mass/Charge density for Li-FePO4
+rho_batt = 360e3;   % J/kg  https://en.wikipedia.org/wiki/Electric_battery
+ 
 
-J_frame = 
-m_frame = 
-rho_batt = 1;   % kg/coulomb 
-l1 = 
+N_motors = 8; % 2 motors for each leg 
 
-l2 = 
+% Combinded joint velocities
+omega_full = [omega_rfs; omega_rfk; omega_rhs; omega_rhk;...
+                omega_lfs; omega_lfk; omega_lhs; omega_lhk];
 
-
-
-% 
-
-
-
-
-ddot_z = zeros(n, 1);  % TODO (from inputs )
-ddot_x = 
-
-% Need robot data -- including firction coefficient 
-% and maybe a stiffness for impulse models 
-
-N_mot = 8; % 2 motors for each leg 
+% Combined joint accelerations 
+omega_dot_full = [omega_dot_rfs; omega_dot_rfk; omega_dot_rhs; omega_dot_rhk;...
+                omega_sot_lfs; omega_dot_lfk; omega_dot_lhs; omega_dot_lhk];
 %
 %
 %
-%  Optimization Vector Setup 
+%                   Optimization Vector Setup 
 %
 %
 %   x = [m_r                - total robot mass (motors + frame + battery)
 %        m_b                - Battery Mass 
 %        J_r                - total robot inertia about com (scalar)
 %        e_gc               - Energy consumed per gait cycle 
-%        p  \in R^(8 x N)   - Power consumed at each time point 
-%        F_LH_x
-%        F_LH_z
-%        F_LF_x
-%        F_LF_z
-%        F_RH_x
-%        F_RH_z
+%        p_rfs              - Right front shoulder power 
+%        p_rfk              - Right
+%        p_rhs
+%        p_rhk
+%        p_lfs              - Left front shoulder power 
+%        p_lfk              - Left
+%        p_lhs
+%        p_lhk
+%        p_total 
 %        F_RF_x
 %        F_RF_z
-%           ]
-g = 9.81; 
+%        F_RH_x
+%        F_RH_z
+%        F_LF_x
+%        F_LF_z
+%        F_LH_x
+%        F_LH_z
+%                   ]
 
 
+
+% Define all the indices 
 m_r_idx = 1; 
 m_b_idx = 2; 
 J_r_idx = 3; 
 e_gc_idx = 4; 
-p_idxs = e_gc_idx + (1:n);
+
+p_rfs_idxs = e_gc_idx + (1:n);
+p_rfk_idxs = p_rfs_idxs(end) + (1:n);
+p_rhs_idxs = p_rfk_idxs(end) + (1:n);
+p_rhk_idxs = p_rhs_idxs(end) + (1:n);
+p_lfs_idxs = p_rhk_idxs(end) + (1:n);
+p_lfk_idxs = p_lfs_idxs(end) + (1:n);
+p_lhs_idxs = p_lfk_idxs(end) + (1:n);
+p_lhk_idxs = p_lhs_idxs(end) + (1:n);
+p_total_idxs = p_lhk_idxs(end) + (1:n);
+
+F_RF_x_idxs = p_total_idxs(end) + (1:n);
+F_RF_z_idxs = F_RF_x_idxs(end) + (1:n);
+
+F_RH_x_idxs = F_RF_z_idxs(end) + (1:n);
+F_RH_z_idxs = F_RH_x_idxs(end) + (1:n);
+
+F_LF_x_idxs = F_RH_x_idxs(end) + (1:n);
+F_LF_z_idxs = F_LF_x_idxs(end) + (1:n);
+
+F_LH_x_idxs = F_LF_z_idxs(end) + (1:n);
+F_LH_z_idxs = F_LH_x_idxs(end) + (1:n);
 
 
+dim_x = F_LH_z_idxs(end); % dimension of x vector 
 
-dim_x = % 
-
-
-
-
-
-
-
-
-% Plot up here showing how it looks? 
-
-
-% Define indices 
-
-
-
-
-
- % Inputs ddot_z, ddot_x, lbody, ddot_theta_com, theta_com
-    % z_com, 
-
-
-% This part doesnt change so define ones   
-
-% WILL WANT TO PROFILE THIS --
-% A LOT OF THIS CODE IS THE SAME EVERY TIME 
 
 %------------------------------------------------
 %
@@ -136,19 +182,17 @@ dim_x = %
 %
 %-----------------------------------------------
 
-
-
 %
 %
 %    Sum Forces in Z - Accounting for total robot mass 
 %
 %
 H_Fz = sparse([], [], [], n, dim_x, 5*n);
-H_Fz(:, indices.F_LH_z_idxs) = eye(n); 
-H_Fz(:, indices.F_LF_z_idxs) = eye(n); 
-H_Fz(:, indices.F_RH_z_idxs) = eye(n); 
-H_Fz(:, indices.F_RF_z_idxs) = eye(n); 
-H_Fz(:, indices.mass_idx) = -(ddot_z + g);
+H_Fz(:, F_LH_z_idxs) = eye(n); 
+H_Fz(:, F_LF_z_idxs) = eye(n); 
+H_Fz(:, F_RH_z_idxs) = eye(n); 
+H_Fz(:, F_RF_z_idxs) = eye(n); 
+H_Fz(:, mass_idx) = -(ddot_z + g);
 b_Fz = zeros(n, 1);
 
 
@@ -158,11 +202,11 @@ b_Fz = zeros(n, 1);
 %
 %
 H_Fx = sparse([], [], [], n, dim_x, 5*n);
-H_Fx(:, indices.F_LH_x_idxs) = eye(n); 
-H_Fx(:, indices.F_LF_x_idxs) = eye(n); 
-H_Fx(:, indices.F_RH_x_idxs) = eye(n); 
-H_Fx(:, indices.F_RF_x_idxs) = eye(n); 
-H_Fx(:, indices.mass_idx) = -ddot_x;
+H_Fx(:, F_LH_x_idxs) = eye(n); 
+H_Fx(:, F_LF_x_idxs) = eye(n); 
+H_Fx(:, F_RH_x_idxs) = eye(n); 
+H_Fx(:, F_RF_x_idxs) = eye(n); 
+H_Fx(:, mass_idx) = -ddot_x;
 b_Fx = zeros(n, 1);
 
 
@@ -172,10 +216,10 @@ b_Fx = zeros(n, 1);
 %
 %
 H_Mx = sparse([], [], [], n, dim_x, 4*n);
-H_Mx(:, indices.F_LH_z_idxs) = eye(n); 
-H_Mx(:, indices.F_LF_z_idxs) = eye(n); 
-H_Mx(:, indices.F_RH_z_idxs) = -eye(n); 
-H_Mx(:, indices.F_RF_z_idxs) = -eye(n); 
+H_Mx(:, F_LH_z_idxs) = eye(n); 
+H_Mx(:, F_LF_z_idxs) = eye(n); 
+H_Mx(:, F_RH_z_idxs) = -eye(n); 
+H_Mx(:, F_RF_z_idxs) = -eye(n); 
 b_Mx = zeros(n, 1);
 
 
@@ -185,18 +229,18 @@ b_Mx = zeros(n, 1);
 %
 %
 H_My = sparse([], [], [], n, dim_x, 9*n);
-H_My(:, indices.F_LH_z_idxs) = diag(-0.5*l_body*cos(theta_com)...
+H_My(:, F_LH_z_idxs) = diag(-0.5*l_body*cos(theta_com)...
                                                  + del_LH_x); 
-H_My(:, indices.F_LF_z_idxs) = diag(0.5*l_body*cos(theta_com)...
+H_My(:, F_LF_z_idxs) = diag(0.5*l_body*cos(theta_com)...
                                                  + del_LF_x); 
-H_My(:, indices.F_RH_z_idxs) = diag(-0.5*l_body*cos(theta_com)...
+H_My(:, F_RH_z_idxs) = diag(-0.5*l_body*cos(theta_com)...
                                                  + del_RH_x); 
-H_My(:, indices.F_RF_z_idxs) = diag(0.5*l_body*cos(theta_com)...
+H_My(:, F_RF_z_idxs) = diag(0.5*l_body*cos(theta_com)...
                                                  + del_RF_x); 
-H_My(:, indices.F_LH_x_idxs) = diag(z_com);
-H_My(:, indices.F_LF_x_idxs) = diag(z_com);
-H_My(:, indices.F_RH_x_idxs) = diag(z_com);
-H_My(:, indices.F_RF_x_idxs) = diag(z_com);
+H_My(:, F_LH_x_idxs) = diag(z_com);
+H_My(:, F_LF_x_idxs) = diag(z_com);
+H_My(:, F_RH_x_idxs) = diag(z_com);
+H_My(:, F_RF_x_idxs) = diag(z_com);
 b_My = zeros(n, 1);   % TODO -- depends on total inertia 
 
 
@@ -207,10 +251,10 @@ b_My = zeros(n, 1);   % TODO -- depends on total inertia
 %
 %
 H_normal = sparse([], [], [], n, dim_x, 4*n);
-H_normal(:, indices.F_LH_z_idxs) = diag(LH_z);
-H_normal(:, indices.F_LF_z_idxs) = diag(LF_z);
-H_normal(:, indices.F_RH_z_idxs) = diag(RH_z);
-H_normal(:, indices.F_RF_z_idxs) = diag(RF_z);
+H_normal(:, F_LH_z_idxs) = diag(LH_z);
+H_normal(:, F_LF_z_idxs) = diag(LF_z);
+H_normal(:, F_RH_z_idxs) = diag(RH_z);
+H_normal(:, F_RF_z_idxs) = diag(RF_z);
 b_normal = zeros(n, 1); 
 
 
@@ -218,9 +262,10 @@ b_normal = zeros(n, 1);
 % Make energy per gait cycle equal to Integral of power consumption
 % using trapezoidal integation 
 H_energy = sparse([], [], [], 1, dim_x, n + 1);
-H_energy(p_idxs(1):p_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
-H_energy(p_idxs(2):p_idxs(end)) = H_energy(p_idxs(2):p_idxs(end))...
-                                     + 0.5*ones(n - 1, 1).*diff(time);
+H_energy(p_total_idxs(1):p_total_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
+H_energy(p_total_idxs(2):p_total_idxs(end)) = ...
+                                H_energy(p_total_idxs(2):p_total_idxs(end))...
+                                             + 0.5*ones(n - 1, 1).*diff(time);
 H_energy(e_gc_idx) = -1;
 b_energy = 0; 
 
@@ -232,9 +277,6 @@ b_mass = @(motor, gearbox) -(m_frame + 8*(motor.mass + gearbox.mass));
 H_inertia = sparse(1, J_r_idx, 1, 1, dim_x);
 b_inertia = @(motor, gearbox) -(J_frame + ...
                         8*(motor.mass + gearbox.mass)*(l_body/2)^2);
-
-
-
 
 %
 %
@@ -312,9 +354,41 @@ b_ineq_fc_lh = zeros(2*n, 1);
 H_ineq_fc = [H_ineq_fc_rf; H_ineq_fc_rh; H_ineq_fc_lf; H_ineq_fc_lh];
 b_ineq_fc = [b_ineq_fc_rf; b_ineq_fc_rh; b_ineq_fc_lf; b_ineq_fc_lh];
 
+%
+%
+%       Account for recharge inefficiency 
+%
+%
+Psi = 0.85; % regen efficincy Psi 
+
+H_ineq_power = sparse([], [], [], 2*n, dim_x, 2*(N_motors + 1));
+
+H_ineq_power(1:n, p_rfs_idxs) = 1; 
+H_ineq_power(1:n, p_rfk_idxs) = 1; 
+H_ineq_power(1:n, p_rhs_idxs) = 1; 
+H_ineq_power(1:n, p_rhk_idxs) = 1; 
+H_ineq_power(1:n, p_lfs_idxs) = 1; 
+H_ineq_power(1:n, p_lfk_idxs) = 1; 
+H_ineq_power(1:n, p_lhs_idxs) = 1; 
+H_ineq_power(1:n, p_lhk_idxs) = 1; 
+H_ineq_power(1:n, p_total_idxs) = -1; 
+
+H_ineq_power(n + (1:n), p_rfs_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_rfk_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_rhs_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_rhk_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_lfs_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_lfk_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_lhs_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_lhk_idxs) = Psi; 
+H_ineq_power(n + (1:n), p_total_idxs) = -1; 
+
+b_ineq_power = zeros(2*n, 1); 
+
+
 % Combine into general inequality matrix 
-H_ineq = [H_ineq_normal; H_ineq_fc];
-b_ineq = [b_ineq_normal; b_ineq_fc]; 
+H_ineq = [H_ineq_normal; H_ineq_fc; H_ineq_power];
+b_ineq = [b_ineq_normal; b_ineq_fc; b_ineq_power]; 
 
 %-------------------------------------------------------------
 %
@@ -407,7 +481,6 @@ M = {};
 r = {}; 
 bet = {};
 
-
 % Standard (SOCP) objective Terms all empty because linear fractional
 Q{1, 1} = []; 
 c{1, 1} = []; 
@@ -415,64 +488,117 @@ M{1, 1} = [];
 r{1, 1} = []; 
 bet{1, 1} = [];
 
-% Define efficiencies psi, 
-Phi = 0.95; % driver board efficienc 
+% Drive board efficiency Phi
+Phi = 0.98; % driver board efficienc 
 Phi_inv = 1/Phi; 
-Psi = 0.8; % regen efficincy psi 
-% Fill in general inequality constraints 
-for j = 1:n
 
-    % If positive power conumption 
-    e_j = zeros(n, 1); 
-    e_j(j) = 1; % one hot vector / unit basis vector 
+for motor = 1:N_motors % loop through motors 
 
-    % NOTE  -- would it be more efficient to divide through by R so no Q dependednce on inputs? Still r and c dependence though 
-    spdg_j =  sparse(diag(e_j)); 
-    Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
-    c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.alpha*omega(j)*e_j;  % TODO -- k_e 
-    M{end + 1, 1} = []; 
-    r{end + 1, 1} = [0; 0; 0; 0; -e_j];  % accounting for the other vars 
-    bet{end + 1, 1} = 0; 
+    switch motor
+        case 1     % RFS 
+            p_idxs = p_rfs_idxs;
+            omega = omega_rfs;
+        case 2      % RFK 
+            p_idxs = p_rfk_idxs;
+            omega = omega_rfk;
+        case 3      % RHS
+            p_idxs = p_rhs_idxs;
+            omega = omega_rhs;
+        case 4      % RHK
+            p_idxs = p_rhk_idxs;
+            omega = omega_rhk;
+        case 5      % LFS 
+            p_idxs = p_lfs_idxs;
+            omega = omega_lfs;
+        case 6      % LFK 
+            p_idxs = p_lfk_idxs;
+            omega = omega_lfk;
+        case 7      % LHS
+            p_idxs = p_lhs_idxs;
+            omega = omega_lhs;
+        case 8      % LHK
+            p_idxs = p_lhk_idxs;
+            omega = omega_lhk;
+    end  % switch
 
-    % If negative power consumption
-    Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; 
-    c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.alpha*omega(j)*e_j;     % TODO-- k_e 
-    M{end + 1, 1} = []; 
-    r{end + 1, 1} = [0; 0; 0; 0; -e_j];  % accounting for the other vars 
-    bet{end + 1, 1} = 0; 
+    for j = 1:n % loop through time points 
+        idx = (motor - 1)*n + j 
+        e_j = zeros(N_motors*n, 1); 
+        % pick out this motor and time point
+        e_j(idx) = 1; % one hot vector / unit basis vector 
+        spdg_j =  sparse(diag(e_j));  
+
+        r_motor_j = zeros(N_motors*n, 1);
+        r_motor_j(p_idxs(j)) = -1; 
+        
+        Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
+        c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_e*gearbox.alpha*omega(j)*e_j;  % TODO -- k_e 
+        M{end + 1, 1} = []; 
+        r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
+        bet{end + 1, 1} = 0; 
+
+        % If negative MOTOR power consumption
+        Q{end + 1, 1} = @(motor, ~) Phi*motor.R * spdg_j; 
+        c{end + 1, 1} = @(motor, gearbox) Phi*motor.k_e*gearbox.alpha*omega(j)*e_j;     % TODO-- k_e 
+        M{end + 1, 1} = []; 
+        r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
+        bet{end + 1, 1} = 0; 
+    end 
+
 end 
 
-%
+
+
+% Combine individual motor power consumptions to total power 
+% consumption considering battery recharge losses 
+
+
+
+
+
+%-----------------------------------------
 %
 %       Voltage and Current Limits 
 %
-%
+%----------------------------------------
 
 V_max = 48; % volts  
 I_max = 100;  % Amps 
 
 I_u = @(motor, gearbox) min(I_max,...
-         (1/motor.R)* min(abs(V_max + motor.k_e*gearbox.alpha.*omega),...
-               abs(V_max + motor.k_e*gearbox.alpha.*omega) ) ); 
+         (1/motor.R)* min(abs(V_max + motor.k_e*gearbox.alpha.*omega_full),...
+               abs(V_max + motor.k_e*gearbox.alpha.*omega_full) ) ); 
 
 
-%
+%-----------------------------------
 %
 %   Linear Fractional Objective
 %
-%
+%------------------------------------------
 %
 %       Requires an explanaition of both the objective here AND 
 %        the general setup for linear fractioal problems 
 %
 %
+%           
+%
+%
+
+
+
+r_num = zeros(w, 1); 
+r_num(ec_idx) = 1; 
+r_den = zeros(w, 1);
+r_den(cb_idx) = 1; 
+beta_num = 0;
+beta_den = 0; 
 
 
 
 
 
-
-
+cost_lb = 0;
+cost_ub = 10; 
 
 
 
@@ -509,23 +635,18 @@ problem_data.M = M;
 problem_data.r = r; 
 problem_data.beta = bet; 
 problem_data.H = H;    % maybe A instead 
+problem_data.H_ineq = H_ineq;
 problem_data.b = b; 
+problem_data.b_ineq = b_ineq; 
 problem_data.T = T;
 problem_data.d = d;
-problem_data.omega = omega; 
+problem_data.omega = omega_full; 
+problem_data.omega_dot = omega_dot_full; % for inertial compensation
 problem_data.I_u = I_u; 
 
 
-r_num = zeros(w, 1); 
-r_num(ec_idx) = 1; 
-r_den = zeros(w, 1);
-r_den(cb_idx) = 1; 
-beta_num = 0;
-beta_den = 0; 
-
-
-problem_data.cost_lb = 0; 
-problem_data.cost_ub = 10; 
+problem_data.cost_lb = cost_lb; 
+problem_data.cost_ub = cost_ub; 
 problem_data.r_num = r_num;
 problem_data.r_den = r_den; 
 problem_data.beta_num = beta_num;
@@ -547,33 +668,26 @@ prob.hints = % HOW BEST TO DO THIS?
 
 % Need to think about what return types should be 
 % What inputs would make sense????? 
-
-sol_struct = prob.optimize(10);
+num_solutions = 5; % number of best combinations to return 
+sol_struct = prob.optimize(num_solutions);
 
 sol = sol_struct(1).sol; 
 
 
-% Extract Results 
-kp = sol.x(kp_idx)
-tau_c = sol.x(tau_c_idx);
-theta_0 = tau_c/kp; 
-
-
-%energy = 
-
-% TODO - would be good to return current AND aux var separately 
-% also want to return cost -- how to return motors is harder question 
-% NOTE: could be good to have a seperate return of motor torque 
-% even though it could be calculated externally 
-
-
-% Plot results 
-
-% show break up of torque 
+%------------
+%
+%       Process Results and index out solutions 
+%
+%-----------------
 
 
 
-% define one-hot in src 
+%--------------------
+%
+%       Plot 
+%
+%
+%----------------
 
 
 
