@@ -124,7 +124,7 @@ methods (Access = public)
         	settings.qcvx_reltol = 1e-3; 
         end 
         if ~isfield(settings, 'qcxabstol')
-        	settings.qcvx_abstol = 1e-4; 
+        	settings.qcvx_abstol = 1e-6; 
         end 
 
         valid_solvers = {'gurobi', 'ecos', 'sedumi'};
@@ -412,9 +412,10 @@ methods (Access = public)
             assert(issymmetric(Mj), 'update_problem: M matrices must be symmetric');
             assert(size(Mj, 1) == w || isempty(Mj), 'size of T or M%d incorrect', j-1);
 
-
-            assert(size(rj, 1) == w, 'update_problem: r_%d incorrect length', j);
-            assert(size(cj, 1) == n, 'update_problem: c_%d incorrect length', j);
+            assert(size(rj, 1) == w, ['update_problem: r_%d incorrect length, ',...
+            				'expected %d, got %d'], j, w, size(rj, 1) );
+            assert(size(cj, 1) == n, ['update_problem: c_%d incorrect length, ',...
+            				'expected %d, got %d'], j, n, size(cj, 1) );
             assert(size(rj, 2) == 1, 'update_problem: r_%d must be col vector', j);
             assert(size(cj, 2) == 1, 'update_problem: c_%d must be col vector', j);
 
@@ -775,8 +776,8 @@ methods (Access = public)
         % convert cell to N x 2 array 
         combo_list = cell2mat(combo_list); 
 
-        %combo_list = combo_list(1:min(length(combo_list), 200), :); 
-        %wwarning('remember to comment this debug thing out limiting combos to 200')
+        %combo_list = combo_list(1:min(length(combo_list), 300), :); 
+        %warning('remember to comment this debug thing out limiting combos to 200')
     
         % maybe add number of distinct motors and gearboxes too 
         %if obj.settings.verbose; fprintf('%d total combinations'); end 
@@ -1106,7 +1107,7 @@ methods (Access = private)
         end
 
         A_eq = [A_eq_tau; A_eq_h]; 
-        b_eq = [b_eq_tau; b]; 
+        b_eq = [b_eq_tau; b]; % NOTE signs 
 
         % there is some processing to do here for if 
         % general constraints are SOCP OR QCP or simple inequality 
@@ -1210,7 +1211,7 @@ methods (Access = private)
         	b_ineq_H = b_ineq; 
 
         	A_ineq_other = [A_ineq_other; A_ineq_H];
-        	b_ineq_other = [b_ineq_other; b_ineq_H]; 
+        	b_ineq_other = [b_ineq_other; -b_ineq_H]; % NOTE signs 
         end  
 
         A_ineq = [A_ineq_tau; A_ineq_other; A_aug];
@@ -1477,8 +1478,8 @@ methods (Access = private)
 
                 % Prints 
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-                disp_txt = sprintf(['%d of %d, LB %0.4f,',...
-                                  ' Best Cost %0.4f'],...
+                disp_txt = sprintf(['%d of %d, LB %0.4e,',...
+                                  ' Best Cost %0.4e'],...
                                j, num_combinations, global_lb, mincost);
                 obj.vprintf(1, disp_txt);
             end 
@@ -1508,6 +1509,8 @@ methods (Access = private)
         % no feasible 
         % rel diff met 
         % abs diff met 
+
+        obj.vprintf(1, '\n');
 
     end  % end optimize fractional 
 
