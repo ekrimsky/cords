@@ -44,7 +44,9 @@ properties (GetAccess = public, SetAccess = private)
     r
     beta % beta 
     H
+    H_ineq
     b
+    b_ineq
     T
     d 
     I_u
@@ -274,6 +276,23 @@ methods (Access = public)
         d = problem_data.d; 
         I_u = problem_data.I_u; 
 
+        % Optional Inputs H_ineq, b_ineq
+        % where H_ineq x + b_ineq = 0
+        H_ineq = []; 
+        b_ineq = [];
+        if isfield(problem_data, 'H_ineq') || isfield(problem_data, 'b_ineq') 
+        	assert(isfield(problem_data, 'H_ineq'),...
+        			 'Need to supply H_ineq AND b_ineq');
+        	assert(isfield(problem_data, 'b_ineq'),...
+        			 'Need to supply H_ineq AND b_ineq');
+        	H_ineq = problem_data.H_ineq;
+        	b_ineq = problem_data.b_ineq; 
+        end 
+
+
+
+
+
         n = length(omega);  
         m = numel(Q) - 1; 
 
@@ -284,7 +303,11 @@ methods (Access = public)
 
         % Check that others are the right size too
         if ~isa(H, 'function_handle');  H = @(motor, gearbox) H;      end 
+        if ~isa(H_ineq, 'function_handle')
+        		 		H_ineq = @(motor, gearbox) H_ineq;            end 
         if ~isa(b, 'function_handle');  b = @(motor, gearbox) b(:);   end 
+        if ~isa(b_ineq, 'function_handle')
+        		 		b_ineq = @(motor, gearbox) b_ineq(:);   				  end 
         if ~isa(T, 'function_handle');  T = @(motor, gearbox) T;      end 
         if ~isa(d, 'function_handle');  d = @(motor, gearbox) d(:);   end 
         if ~isa(I_u, 'function_handle'); I_u = @(motor, gearbox) I_u; end 
@@ -312,6 +335,13 @@ methods (Access = public)
                                          'Incorrect number of columns in H');
         assert(size(H_test, 1) == length(b_test), 'Size H and b incompatible')
         p = length(b_test); 
+
+        H_ineq_test = H_ineq(test_motor, test_gearbox); 
+        b_ineq_test = b_ineq(test_motor, test_gearbox); 
+        assert(size(H_ineq_test, 2) == w || isempty(H_ineq_test),...
+                            'Incorrect number of columns in H_ineq');
+        assert(size(H_ineq_test, 1) == length(b_ineq_test),...
+        				 'Size H_ineq and b_ineq incompatible')
 
         I_u_test = I_u(test_motor, test_gearbox);
         assert(length(I_u_test) == n, 'I_u incorrect length');
@@ -461,6 +491,9 @@ methods (Access = public)
         end 
 
 
+        %
+        %	Validating inputs for linear fractional problems 
+        %
         if (isfield(problem_data, 'cost_ub') && ~isempty(problem_data.cost_ub)) ||...
            (isfield(problem_data, 'cost_lb') && ~isempty(problem_data.cost_lb)) ||...
            (isfield(problem_data, 'r_num') && ~isempty(problem_data.r_num)) ||...
@@ -535,7 +568,9 @@ methods (Access = public)
         obj.r = r; 
         obj.beta = bet; 
         obj.H = H; 
+        obj.H_ineq = H_ineq; 
         obj.b = b; 
+        obj.b_ineq = b_ineq; 
         obj.T = T; 
         obj.d = d; 
         obj.omega = omega;
@@ -873,6 +908,9 @@ methods (Access = private)
 
         H = obj.H(motor, gearbox);
         b = obj.b(motor, gearbox);
+        H_ineq = obj.H_ineq(motor, gearbox);
+        b_ineq = obj.b_ineq(motor, gearbox);
+
 
         T = obj.T(motor, gearbox);
         tau_gearbox_inertia = gearbox.inertia * (alph^2) * omega_dot; 
@@ -1163,6 +1201,17 @@ methods (Access = private)
         else 
             error('Invalid Problem type ')
         end 
+
+        % Add the linear inequalities in H_ineq, b_ineq
+        if ~isempty(H_ineq)
+        	% Add these to A_ineq other 
+        	A_ineq_H = sparse([], [], [], size(H_ineq, 1), dim_y, nnz(H_ineq));
+        	A_ineq_H(:, x_start_idx:x_end_idx) = H_ineq; 
+        	b_ineq_H = b_ineq; 
+
+        	A_ineq_other = [A_ineq_other; A_ineq_H];
+        	b_ineq_other = [b_ineq_other; b_ineq_H]; 
+        end  
 
         A_ineq = [A_ineq_tau; A_ineq_other; A_aug];
         b_ineq = [b_ineq_tau; b_ineq_other; b_aug];
