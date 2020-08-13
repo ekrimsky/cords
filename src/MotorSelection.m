@@ -118,14 +118,17 @@ methods (Access = public)
         end 
 
         % Fill in default settings 
+        if ~isfield(settings, 'debug'); settings.debug = false; end 
+        assert(islogical(settings.debug), 'debug setting must be true/false');
         if ~isfield(settings, 'rho'); settings.rho = 1e-6; end
         if ~isfield(settings, 'verbose'); settings.verbose = 1; end 
         if ~isfield(settings, 'qcvx_reltol')
         	settings.qcvx_reltol = 1e-3; 
         end 
-        if ~isfield(settings, 'qcxabstol')
+        if ~isfield(settings, 'qcvx_abstol')
         	settings.qcvx_abstol = 1e-6; 
         end 
+
 
         valid_solvers = {'gurobi', 'ecos', 'sedumi'};
         has_gurobi = ~isempty(which('gurobi.m'));
@@ -255,9 +258,6 @@ methods (Access = public)
         assert(isfield(problem_data, 'T'), 'Missing T');
         assert(isfield(problem_data, 'd'), 'Missing d');
         assert(isfield(problem_data, 'I_u'), 'Missing I_u');
-
-
-
 
 
         % Get dummy motor and dummy gearbox for input validation 
@@ -401,8 +401,6 @@ methods (Access = public)
 
             if isempty(Qj); Q{j} = @(~, ~) Q_empty; end 
             if isempty(Mj); M{j} = @(~, ~) M_empty; end 
-
-
 
             assert(issparse(Qj) || isempty(Qj),...
                              'update_problem: Q matrices must be sparse');
@@ -776,8 +774,8 @@ methods (Access = public)
         % convert cell to N x 2 array 
         combo_list = cell2mat(combo_list); 
 
-        %combo_list = combo_list(1:min(length(combo_list), 300), :); 
-        %warning('remember to comment this debug thing out limiting combos to 200')
+        combo_list = combo_list(1:min(length(combo_list), 30), :); 
+        warning('remember to comment this debug thing out limiting combos to 200')
     
         % maybe add number of distinct motors and gearboxes too 
         %if obj.settings.verbose; fprintf('%d total combinations'); end 
@@ -887,11 +885,14 @@ methods (Access = private)
                                                  bound)
 
 
+    	start_tic = tic; 		% to get timing 
+
         % rename cutoff to "bound" and then check problem type 
         if strcmp(obj.problem_type, 'standard')
             cutoff = bound; 
         elseif strcmp(obj.problem_type, 'fractional')
             cutoff = inf; 
+            assert(~isinf(bound), 'Bound must be finite for fractional problems');
         else 
             error('Invalid problem type');
         end 
@@ -920,7 +921,7 @@ methods (Access = private)
         
         I_u = obj.I_u(motor, gearbox);  % symmetric bounds, dont need I_l
 
-
+        % dimensions 
         n = obj.n; 
         w = obj.w;
         p = obj.p;
@@ -933,8 +934,9 @@ methods (Access = private)
         sign_omega = sign(omega); 		% = 0 if omega = 0 
         so = round(sign_omega + 0.1); 	% = 1 if omega = 0  
 
-
-        % Friction and Inertia 
+        %
+        % 		Friction and Inertia 
+        %
 
         % TODO -- whats the best general way to handle static friction
         % Should there be a call to a function which determines 
@@ -1190,12 +1192,14 @@ methods (Access = private)
 
 
         if strcmp(obj.problem_type, 'fractional')
-            % augment H with equality 
+            % Augment H with equality 
             A_aug = zeros(2, dim_y); 
-            A_aug(1, x_start_idx:x_end_idx) = obj.r_num -bound*obj.r_den;
+            A_aug(1, x_start_idx:x_end_idx) = obj.r_num - bound*obj.r_den;
+            
             % Constrain denominator to be positive  
             A_aug(2, x_start_idx:x_end_idx) = -obj.r_den; % nonnegativitiy -- need to generalize 
             b_aug = [bound*obj.beta_den - obj.beta_num; obj.beta_den];
+        
         elseif strcmp(obj.problem_type, 'standard')
             A_aug = []; 
             b_aug = []; 
@@ -1341,21 +1345,38 @@ methods (Access = private)
         end 
 
         %% Parse solutons 
-
         sol.I = y_sol(I_start_idx:I_end_idx);
         sol.x = y_sol(x_start_idx:x_end_idx); 
+        sol.tau = T*sol.x + d; 	% Total torque output 
 
-        solve_time = 100; % TODO 
+        % TODO -- friction compensatoin torque 
+        % TODO -- inertial compensation torque
+
+        % Everything should line 
+
+        % Add debug to settings 
+
+        if obj.settings.debug % add more things to output 
+
+        	% TODO 
+
+
+
+        end 
+
+
+
+        solve_time = toc(start_tic);
 
 
         % TODO Some debug verifcation that is usually skipped 
-        % TODO decompositon of results 
+
     end 
 
 
 
 
-    function [cost_list, sol_structs] = optimize_fractional(obj, num_return, combos)
+    function [cost_list, sol_structs, exitflag] = optimize_fractional(obj, num_return, combos)
     %
     %
     %
@@ -1369,6 +1390,10 @@ methods (Access = private)
         % individual lower and upper bounds change 
         % would need some logging 
 
+        start_tic = tic; 
+
+        assert(num_return >= 1, 'num_return must be positive int');
+
         motors = table2struct(obj.motors);
         gearboxes = table2struct(obj.gearboxes);
         mincost = inf; % no feasible solution yet 
@@ -1378,7 +1403,9 @@ methods (Access = private)
         num_combinations = size(combos, 1); 
 
         lb_list = global_lb * ones(num_combinations, 1);  
-        ub_list = global_ub * ones(num_combinations, 1); 
+        %ub_list = global_ub * ones(num_combinations, 1); 
+        ub_list = inf(num_combinations, 1); % no valid solutions yet
+
 
         % storing solutions separately so dont need to always recompute
         % if bounds already convered for a given design 
@@ -1388,13 +1415,25 @@ methods (Access = private)
         max_rel_bnd_diff = inf; 
 
         outer_loop_iter = 1; 
+
+        table_line = [repmat('-', 1, 80), '\n']; 
+        obj.vprintf(1, table_line);
+        headers = [" Outer Iter  |", "Combos   |", "   LB    |",...
+        				"Pool UB   |", " Min Cost   |", "    Time  "];
+        header_txt = sprintf('%+14s%+14s%+13s%+13s%+13s%+11s\n', headers);
+        obj.vprintf(1, header_txt);
+        obj.vprintf(1, table_line);
+        disp_txt = []; 
+
+        bad_lower_bound_flag = false; 
+        bad_upper_bound_flag = false; 
+
+
         while (max_abs_bnd_diff > obj.settings.qcvx_abstol) && ...
-             (max_rel_bnd_diff > obj.settings.qcvx_reltol)
+              (max_rel_bnd_diff > obj.settings.qcvx_reltol) && ...
+               ~bad_lower_bound_flag && ~bad_upper_bound_flag
 
             pq = PQ(true); % max priority queue -- new every loop 
-
-            obj.vprintf(1, '\nOuter iteration %d, Combination ', outer_loop_iter); 
-            disp_txt = []; 
 
             for j = 1:num_combinations % Our loop thoufg   
                 motor = motors(combos(j, 1));
@@ -1402,12 +1441,15 @@ methods (Access = private)
 
                 % while not converged on this + break condition below
                 % Need each upper and lower bound to approach each other every iter
-                init_flag = true;  
-                while ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_abstol) && ...
-                     ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
-                     (lb_list(j) <= global_ub) 
+                if outer_loop_iter == 1
+                	init_flag = true;  
+                end 
+
+                while ( ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_abstol) && ...
+                      ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
+                     (lb_list(j) <= global_ub) )  || init_flag %
                    
-                    if (outer_loop_iter == 1) && init_flag 
+                    if init_flag 
                         bound = global_ub;
                         init_flag = false; 
                     else 
@@ -1447,7 +1489,10 @@ methods (Access = private)
 
 
                 % Check if upper bound for design we just considered goes in the PQ 
-                if ub_list(j) < global_ub   % ie. this goes into sol pool
+                %if ub_list(j) < global_ub   % ie. this goes into sol pool
+                if (ub_list(j) < global_ub) || ...
+                		((ub_list(j) <= global_ub) && (pq.size() < num_return))	
+                    
                     % Heres THE PLAN
                     % store cell array of solutions for all options 
                     % if solution is found 
@@ -1461,15 +1506,31 @@ methods (Access = private)
                     pq.insert(ub_list(j), sol_struct); 
 
                     if pq.size() > num_return  % if inserting put us over limit 
-                        pq.pop(); % remove max element from pq 
-                        % then update the cutoff      
-                        [global_ub, ~] = pq.peek(); % update the cutoff 
+                        pq.pop(); % remove max element from pq                         
                     end 
+
+                    % There may be fewer solutions than num return
+                    % then update the cutoff      
+                    [global_ub, ~] = pq.peek(); % update the cutoff 
 
                     % For the actual minimum cost 
                     if  ub_list(j) < mincost
-                        mincost = bound; 
-                    end                             
+                        mincost = ub_list(j); 
+
+                        % May have closed the gap and lower bound not low enough 
+
+                        cost_diff = abs(mincost - global_lb);  
+                        if (cost_diff < obj.settings.qcvx_abstol) || ...
+                    		(cost_diff < obj.settings.qcvx_reltol*...
+                    				   max(abs([mincost, lb_list(j)])) );
+            				obj.vprintf(1, ['\nLower bound (lb) is feasible. ',...
+            		        	        'Reduce lower bound and reoptimize']);
+            				
+            				bad_lower_bound_flag = true; 
+            				pq = PQ(true); % clear it -- return nothing 
+            				break;  % break the while on this 
+            			end 
+            		end 
                 end 
 
                 if lb_list(j) > global_ub  
@@ -1478,9 +1539,10 @@ methods (Access = private)
 
                 % Prints 
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-                disp_txt = sprintf(['%d of %d, LB %0.4e,',...
-                                  ' Best Cost %0.4e'],...
-                               j, num_combinations, global_lb, mincost);
+        		frac_txt = sprintf('%d/%d', j, num_combinations);
+				disp_txt = sprintf('%13d %13s %12.2e %12.2e %12.2e %11.2f',...
+								 outer_loop_iter, frac_txt,...
+								global_lb, global_ub, mincost, toc(start_tic));                
                 obj.vprintf(1, disp_txt);
             end 
 
@@ -1492,26 +1554,42 @@ methods (Access = private)
 
             % Update global lower bounds 
             global_lb = min(lb_list); % no design can beat this 
-            outer_loop_iter = outer_loop_iter + 1; 
 
+            % If no solution found at end of first outer loop, break 
+            if (outer_loop_iter == 1) && isinf(mincost)
+            	obj.vprintf(1, '\nNo solutions found. Try increasing the upper bound');
+            	bad_upper_bound_flag = true; 
+            end 
+
+            outer_loop_iter = outer_loop_iter + 1; 
+            disp_txt = []; 
+            obj.vprintf(1, '\n');
+        end 
+        
+        num_sols = pq.size(); % may not have found num_return feas sols 
+
+        if num_sols == 0
+        	sol_structs = struct(); % empty struct; 
+        elseif num_sols < num_return
+        	obj.vprintf(1, 'Only %d feasible solutions found\n', num_sols); 
         end 
 
-        % TODO -- format outputs 
-        num_sols = pq.size(); % may not have found num_return feas sols 
         for i = num_sols:-1:1
             [~, sol_struct] = pq.pop(); 
             sol_structs(i) = sol_struct;
         end 
         cost_list = ub_list; % NOTE: no pseudocost incorporated here 
-
-
-        % NOTE: -- Return some exit criteria info 
-        % no feasible 
-        % rel diff met 
-        % abs diff met 
-
-        obj.vprintf(1, '\n');
-
+       	if (max_abs_bnd_diff < obj.settings.qcvx_abstol) 
+        	exitflag = 1; 
+        elseif (max_rel_bnd_diff < obj.settings.qcvx_reltol) 
+        	exitflag = 2; 
+        elseif bad_lower_bound_flag
+        	exitflag = 3;
+        elseif bad_upper_bound_flag 
+        	exitflag = 4; 
+        else 
+        	error('Unknown exit criteria');
+        end 
     end  % end optimize fractional 
 
 
