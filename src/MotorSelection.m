@@ -118,9 +118,10 @@ methods (Access = public)
         end 
 
         % Fill in default settings 
-        if ~isfield(settings, 'debug'); settings.debug = false; end 
+        if ~isfield(settings, 'debug'); settings.debug = true; end 
         assert(islogical(settings.debug), 'debug setting must be true/false');
-        if ~isfield(settings, 'rho'); settings.rho = 1e-6; end
+        if settings.debug; fprintf('Debug is on...\n'); end; 
+        if ~isfield(settings, 'rho'); settings.rho = 1e-4; end
         if ~isfield(settings, 'verbose'); settings.verbose = 1; end 
         if ~isfield(settings, 'qcvx_reltol')
         	settings.qcvx_reltol = 1e-3; 
@@ -414,8 +415,11 @@ methods (Access = public)
             				'expected %d, got %d'], j, w, size(rj, 1) );
             assert(size(cj, 1) == n, ['update_problem: c_%d incorrect length, ',...
             				'expected %d, got %d'], j, n, size(cj, 1) );
-            assert(size(rj, 2) == 1, 'update_problem: r_%d must be col vector', j);
-            assert(size(cj, 2) == 1, 'update_problem: c_%d must be col vector', j);
+            assert(size(rj, 2) == 1, 'update_problem: r_%d must be col vector', j-1);
+            assert(size(cj, 2) == 1, 'update_problem: c_%d must be col vector', j-1);
+
+            assert(min(cj.*omega) >= 0, ['update_problem: c_%d'' must ',...
+            			     					'satisfy c .* omega >= 0'], j-1); 
 
 
             if nnz(Qj) == 0 % empty 
@@ -620,6 +624,7 @@ methods (Access = public)
     %
     %   The problem type is assumed from the setup (standard or fractional)
     %
+    	start_tic = tic; 
         if isempty(varargin) || isempty(varargin{1})
             num_return = 1;
         else 
@@ -655,8 +660,8 @@ methods (Access = public)
 
             for j = 1:num_combinations 
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-                       disp_txt = sprintf('%d of %d, Best Cost: %0.4f',...
-                         j, num_combinations, mincost);
+                       disp_txt = sprintf('%d of %d, Best Cost: %0.4f, Time: %0.2f',...
+                         j, num_combinations, mincost, toc(start_tic));
                 obj.vprintf(1, disp_txt);
 
                 motor = motors(combos(j, 1));
@@ -774,8 +779,8 @@ methods (Access = public)
         % convert cell to N x 2 array 
         combo_list = cell2mat(combo_list); 
 
-        combo_list = combo_list(1:min(length(combo_list), 30), :); 
-        warning('remember to comment this debug thing out limiting combos to 200')
+        %combo_list = combo_list(1:min(length(combo_list), 30), :); 
+        %warning('remember to comment this debug thing out limiting combos to 200')
     
         % maybe add number of distinct motors and gearboxes too 
         %if obj.settings.verbose; fprintf('%d total combinations'); end 
@@ -916,8 +921,8 @@ methods (Access = private)
 
         T = obj.T(motor, gearbox);
         tau_gearbox_inertia = gearbox.inertia * (alph^2) * omega_dot; 
-        d = obj.d(motor, gearbox) + tau_gearbox_inertia;
-
+        d = obj.d(motor, gearbox); 
+        d_comp = d + tau_gearbox_inertia; % NOTE: gb addition
         
         I_u = obj.I_u(motor, gearbox);  % symmetric bounds, dont need I_l
 
@@ -943,11 +948,17 @@ methods (Access = private)
         % friction model based of settings? 
         tau_friction_static = 1.1 * k_t * motor.I_nl;  
 
-        tau_friction = k_t * motor.I_nl * sign_omega; % NOTE: Incorp other friction models 
-        tau_motor_inertia = motor.inertia * (alph^2) * omega_dot; 
+        % tau_motor_friction is JUST kinetic 
+        tau_motor_friction = k_t * motor.I_nl * sign_omega; % NOTE: Incorp other friction models 
+        
+
+        % Since BEFORE gearbox only multiplied by alpha NOT alpha^2 
+        % will effectively get multiplied by alpha again when it goes 
+        % throug the gearbox 
+        tau_motor_inertia = motor.inertia * alph * omega_dot; 
         
   		% Dynamic Motor Friction and Inertia Compensation  (f - fric, j- inerits )
-        tau_mfj = tau_friction + tau_motor_inertia; 
+        tau_mfj = tau_motor_friction + tau_motor_inertia; 
         I_comp = tau_mfj/k_t; % corresponding current 
 
 
@@ -978,6 +989,14 @@ methods (Access = private)
         A_eq_tau1(:, I_start_idx:I_end_idx) = -eye(n);
         b_eq_tau1 = zeros(n, 1); 
 
+
+
+        % Remove after fix 
+        A_eq_tau3 = []; 
+        b_eq_tau3 = []; 
+
+   
+
         if eta < 1 
             gm_start_idx = 3*n + 1;
             gm_end_idx = 4*n;
@@ -994,7 +1013,9 @@ methods (Access = private)
             A_eq_tau2(:, gm_start_idx:gm_end_idx) = eye(n);
             A_eq_tau2(:, mu_start_idx:mu_end_idx) = eye(n);
             % TODO -- remove current from the formulation 
-            A_eq_tau2(:, I_start_idx:I_end_idx) = -eye(n);
+            A_eq_tau2(:, I_start_idx:I_end_idx) = -eye(n); %------------------------
+			%A_eq_tau2(:, Ip_start_idx:Ip_end_idx) = -eye(n); %++++++++++++++++++++++
+			%A_eq_tau2(:, In_start_idx:In_end_idx) = eye(n);  %+++++++++++++++++++++
             b_eq_tau2 = I_comp; 
 
             % Tx + d = motor/gearbox torque 
@@ -1003,7 +1024,7 @@ methods (Access = private)
             A_eq_tau_x(:, gm_start_idx:gm_end_idx) = alph*eta*k_t*eye(n);
             A_eq_tau_x(:, mu_start_idx:mu_end_idx) = (alph*k_t/eta)*eye(n);
             %b_eq_tau_x = d + alph*k_t*(eta + 1/eta)*so.*I_nl; 
-            b_eq_tau_x = d + alph*(eta + 1/eta)*I_comp; 
+            b_eq_tau_x = d_comp + alph*(eta + 1/eta)*tau_mfj; 
 
 
 
@@ -1012,12 +1033,100 @@ methods (Access = private)
             % constraints )
 
             % sign(omega)*(gamma- mu) - I_nl - Ip - In <= 0 
+            % sign(omega)*(gamma - mu) - abs(tau_fric/kt) - tau_inertia? 
             A_ineq_tau = zeros(n, dim_y);  
             A_ineq_tau(:, gm_start_idx:gm_end_idx) = diag(so);
             A_ineq_tau(:, mu_start_idx:mu_end_idx) = -diag(so);
             A_ineq_tau(:, Ip_start_idx:Ip_end_idx) = -eye(n);
             A_ineq_tau(:, In_start_idx:In_end_idx) = -eye(n);  
-            b_ineq_tau = so.*I_comp; 
+            %b_ineq_tau = so.*I_comp; %----------------------------------------
+            
+            %b_ineq_tau = motor.I_nl - so.*(tau_motor_inertia/k_t); 
+            %b_ineq_tau = -(I_comp);
+
+            
+            b_ineq_tau = 100 * ones(n, 1); % removes thus 
+            %
+            %b_ineq_tau = zeros(n, 1);
+            for i = 1:n 
+
+            	if (so(i) == 1)
+            		if I_comp(i) >= 0  % standard friction case 
+            			b_ineq_tau(i) = I_comp(i);  % CORRECT (STANDARD )
+            		else 
+            			%b_ineq_tau(i) = eta * I_comp(i); % I think????
+
+
+            			% Not wrong but not helpful enough?
+            			b_ineq_tau(i) = -I_comp(i);
+
+            			% ending up with gm = 0 
+            			% and mu = -In + I_comp 
+            			% want -- mu = -In, gm = I_comp 
+
+
+            			% IS IT POSSIBLE THAT WE ARE GETTING THESE 
+            			% ERRORS BUT THE SOLUTOIN IS EQUIVALENT?? 
+
+            			% HOW TO CHECK THIS IS WITH A CLEAN UP 
+
+            			% CLEAN THE SOLUTION AND CHECK HOW MUCH 
+            			% THE COST IS ALTERED 
+            			% THEN WE ARE TALKING ABOUT AN OPTIMAL POINT 
+            			% VS THE OPTIMAL POINT
+
+            			% ASSUME CURRENT AND WORK BACKWARD FROM THERE 
+            			% OK. TRY THIS NEXT
+            			%{
+            			if isempty(A_eq_tau3); disp('fffff'); end 
+
+            			Aug3 = zeros(1, dim_y);
+            			Aug3(1, gm_start_idx + i - 1) = 1;
+            			Aug3(1, mu_start_idx + i - 1) = -1;
+            			Aug3(1, Ip_start_idx + i - 1) = -1;
+            			Aug3(1, In_start_idx + i - 1) = -1;
+
+            			A_eq_tau3 = [A_eq_tau3; Aug3];
+            			b_eq_tau3 = [b_eq_tau3; -I_comp(i)];
+            			%}
+
+            			%b_ineq_tau(i) = 0; 
+            		end 
+            	else
+            		if I_comp(i) <= 0 % standard frictoin case
+            			b_ineq_tau(i) = -I_comp(i);    % CORRECT (STANDARD)
+            		else 
+            			b_ineq_tau(i) = - (1/eta) * I_comp(i); % HELP ME 
+            		end 
+            	end 
+
+            end 
+            
+
+            % FILL IN 
+
+                 % Experimental 
+      		  %Tx + d = outpiut torque <= kt*alpha*min{eta(I - Icomp), (I - Icomp)/eta}
+        	
+        	% gets us further without error -- maybe some merit -- think on it more 
+
+        	% WE ARE HITTING ERRORS AT THE PEAK ACCCELERATOINS JUST FYI 
+        	%
+        	%
+        	%
+        	A_ineq_tau2 = []; 
+        	b_ineq_tau2 = [];
+
+            A_ineq_tau2 = zeros(2*n, dim_y);
+            A_ineq_tau2(:, x_start_idx:x_end_idx) = [T; T]; 
+            A_ineq_tau2(1:n, I_start_idx:I_end_idx) = -k_t*alph*eta*eye(n);
+            A_ineq_tau2(n+1:end, I_start_idx:I_end_idx) = -k_t*(alph/eta)*eye(n);
+
+            b_ineq_tau2 = [-d_comp - k_t*alph*eta*I_comp;...
+            				 -d_comp - k_t*(alph/eta)*I_comp]; 
+
+            A_ineq_tau = [A_ineq_tau; A_ineq_tau2];
+            b_ineq_tau = [b_ineq_tau; b_ineq_tau2]; 
 
 
             % Bounds on individual variables (ie. box constraints)
@@ -1027,6 +1136,12 @@ methods (Access = private)
             % and upper bound I_u + I_nl 
             % If sign(omega) = -1, upper bound on gm is -I_nl 
             % lower bound is -I_u - I_nl 
+
+
+            %I_nl = motor.I_nl; 
+            % lb(gm_start_idx:gm_end_idx) = min(so.*I_nl,  so.*(I_nl + I_u));
+            %ub(gm_start_idx:gm_end_idx) = max(so.*I_nl,  so.*(I_nl + I_u));
+
 			lb(gm_start_idx:gm_end_idx) = min(I_comp,  I_comp + (so.*I_u));
             ub(gm_start_idx:gm_end_idx) = max(I_comp,  I_comp + (so.*I_u));
 
@@ -1040,6 +1155,11 @@ methods (Access = private)
 										  I_comp - (sign_omega.*I_u));
             ub(mu_start_idx:mu_end_idx) = max(I_comp,...
             							  I_comp - (sign_omega.*I_u));
+
+
+          	%lb(mu_start_idx:mu_end_idx) = min(so.*I_nl,  so.*(I_nl - I_u));
+            %ub(mu_start_idx:mu_end_idx) = max(so.*I_nl,  so.*(I_nl - I_u));
+
         else   % Direct drive or fully efficient gearbox 
             x_start_idx = 3*n + 1; 
             x_end_idx = x_start_idx + w - 1; 
@@ -1047,8 +1167,10 @@ methods (Access = private)
            
             A_eq_tau_x = zeros(n, dim_y);    % sparse? 
             A_eq_tau_x(:, x_start_idx:x_end_idx) = -T; 
-            A_eq_tau_x(:, I_start_idx:I_end_idx) = alph*k_t*eye(n);
-            b_eq_tau_x = d + alph*k_t*I_comp; 
+            A_eq_tau_x(:, I_start_idx:I_end_idx) = alph*k_t*eye(n); %--------------------
+            %A_eq_tau_x(:, Ip_start_idx:Ip_end_idx) = alph*k_t*eye(n); %++++++++++++++++++
+            %A_eq_tau_x(:, In_start_idx:In_end_idx) = -alph*k_t*eye(n); %+++++++++++++++++
+            b_eq_tau_x = d_comp + alph*k_t*I_comp; 
 
             A_eq_tau2 = []; 
             b_eq_tau2 = []; 
@@ -1060,7 +1182,7 @@ methods (Access = private)
     
  		% Zero Vel - Use Static Friction 
         zv_start_idx = x_end_idx + 1; 
-        zv_end_idx = x_end_idx + nzvi - 1; 
+        zv_end_idx = zv_start_idx + nzvi - 1; 
 
         if nzvi > 0 
         	% TODO -- probably consider gb fully efficient at zero vel?
@@ -1069,9 +1191,9 @@ methods (Access = private)
 
             % Overwrite the other zero vel points, treat gb as fully eff 
             if eta < 1
-            	A_eq_tau_x(zero_vel_idxs, gm_start_idx:gm_end_idx) = alph*k_t;
+            	A_eq_tau_x(zero_vel_idxs, gm_start_idx + zero_vel_idxs - 1) = alph*k_t;
             	A_eq_tau_x(zero_vel_idxs, mu_start_idx:mu_end_idx) = 0;
-            	b_eq_tau_x(zero_vel_idxs) = d(zero_vel_idxs) + alph*k_t*I_comp(zero_vel_idxs);
+            	b_eq_tau_x(zero_vel_idxs) = d_comp(zero_vel_idxs) + alph*k_t*I_comp(zero_vel_idxs);
             end 
 
             % Friction Cone 
@@ -1085,9 +1207,11 @@ methods (Access = private)
         end 
 
 
-        A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau_x];
-        b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau_x];
-
+        %A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau_x];
+        %b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau_x];
+        % TODO -----------------------------------------------------------------
+        A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau3; A_eq_tau_x];
+        b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau3; b_eq_tau_x];
 
 
         % Fill in variable bounds on I, Ip, In 
@@ -1097,13 +1221,13 @@ methods (Access = private)
         lb(Ip_start_idx:Ip_end_idx) = 0;    % non-negativity 
         ub(Ip_start_idx:Ip_end_idx) = I_u; 
 
-        lb(In_start_idx:In_end_idx) = 0; 
+        lb(In_start_idx:In_end_idx) = 0;    % non-negativity
         ub(In_start_idx:In_end_idx) = I_u; 
 
-        % First index torque constraints into it
+
         if ~isempty(H)
             A_eq_h = zeros(size(H, 1), dim_y);
-            A_eq_h(:, x_start_idx:x_end_idx) = -H;   
+            A_eq_h(:, x_start_idx:x_end_idx) = -H;   % note signs
         else 
             A_eq_h = [];
         end
@@ -1139,7 +1263,6 @@ methods (Access = private)
         lin_ineq_idx = 0; 
 
         for j = 1:m    % incorporate the quadratic constraints + other linear ineqs 
-
             cj = obj.c{j + 1};  % +1 bc 1 indexing 
             if isa(cj, 'function_handle')
                 c_tmp = cj(motor, gearbox); 
@@ -1161,7 +1284,9 @@ methods (Access = private)
                 beta_tmp = bet; 
             end 
             q_tmp = zeros(dim_y, 1); 
-            q_tmp(I_start_idx:I_end_idx) = c_tmp; 
+            q_tmp(I_start_idx:I_end_idx) = c_tmp; 	%----------------------------------------------
+			%q_tmp(Ip_start_idx:Ip_end_idx) = c_tmp;   %+++++++++++++++++++++++++++++
+			%q_tmp(In_start_idx:In_end_idx) = -c_tmp;   %+++++++++++++++++++++++++++++++++++
             q_tmp(x_start_idx:x_end_idx) = r_tmp; 
 
             if obj.lin_ineq(j)  % if linear 
@@ -1197,14 +1322,14 @@ methods (Access = private)
             A_aug(1, x_start_idx:x_end_idx) = obj.r_num - bound*obj.r_den;
             
             % Constrain denominator to be positive  
-            A_aug(2, x_start_idx:x_end_idx) = -obj.r_den; % nonnegativitiy -- need to generalize 
+            A_aug(2, x_start_idx:x_end_idx) = -obj.r_den; % nonnegativitiy 
             b_aug = [bound*obj.beta_den - obj.beta_num; obj.beta_den];
         
         elseif strcmp(obj.problem_type, 'standard')
             A_aug = []; 
             b_aug = []; 
         else 
-            error('Invalid Problem type ')
+            error('Invalid Problem type ');
         end 
 
         % Add the linear inequalities in H_ineq, b_ineq
@@ -1218,6 +1343,8 @@ methods (Access = private)
         	b_ineq_other = [b_ineq_other; -b_ineq_H]; % NOTE signs 
         end  
 
+
+        % TODO -- naming -- dont over b_ineq name 
         A_ineq = [A_ineq_tau; A_ineq_other; A_aug];
         b_ineq = [b_ineq_tau; b_ineq_other; b_aug];
 
@@ -1231,7 +1358,6 @@ methods (Access = private)
 
 
         %% ----- Incorporate Actual Cost --------------
-        %Q_cost = zeros(dim_y, dim_y); % TODO -- sparse 
         Q_cost = sparse([], [], [], dim_y, dim_y, 2*n^2 + w^2); % TODO -- sparse 
 
         Q0 = obj.Q{1}(motor, gearbox); 
@@ -1263,7 +1389,9 @@ methods (Access = private)
         Q_cost(x_start_idx:x_end_idx, x_start_idx:x_end_idx)= M0; 
 
         c_cost_init = zeros(dim_y, 1); 
-        c_cost_init(I_start_idx:I_end_idx) = c0; 
+        c_cost_init(I_start_idx:I_end_idx) = c0; %---------------------------------------------
+		%c_cost_init(Ip_start_idx:Ip_end_idx) = c0;%+++++++++++++++++++++++++++++++++++++++++++
+		%c_cost_init(In_start_idx:In_end_idx) = -c0;%++++++++++++++++++++++++++++++++++++++++++
         c_cost_init(x_start_idx:x_end_idx) = r0; 
 
         c_rho_aug = zeros(dim_y, 1); 
@@ -1296,7 +1424,13 @@ methods (Access = private)
             % TODO -- a way for users to change solver params 
             % like tolerances (--- 'Advanced Users only ----')
             params.cutoff = cutoff; 
-            params.outputflag = 0;
+            params.outputflag = 0;		% TODO 
+
+            params.FeasibilityTol = 1e-8; % Default 1e-6
+            params.OptimalityTol = 1e-9; % TODO % default 1e-6 
+            params.BarConvTol = 1e-9; % defaulat 1e-8 
+            params.BarQCPConvTol = 1e-9; % default 1e-6
+
             result = gurobi(model, params); 
             if strcmp(result.status, 'OPTIMAL')
                 y_sol = result.x; 
@@ -1344,32 +1478,363 @@ methods (Access = private)
             error('invalid solver'); % shouldnt be possible 
         end 
 
-        %% Parse solutons 
-        sol.I = y_sol(I_start_idx:I_end_idx);
-        sol.x = y_sol(x_start_idx:x_end_idx); 
-        sol.tau = T*sol.x + d; 	% Total torque output 
+        %%
+        %
+        %		 Parse solutons 
+        %
+        %
 
-        % TODO -- friction compensatoin torque 
-        % TODO -- inertial compensation torque
-
-        % Everything should line 
-
-        % Add debug to settings 
-
-        if obj.settings.debug % add more things to output 
-
+        if isinf(combo_cost)
+        	% Return nans 
+        	sol = struct(); % empty 
+        else 
         	% TODO 
+			Ip = y_sol(Ip_start_idx:Ip_end_idx);    % pos current 
+	        In = y_sol(In_start_idx:In_end_idx);	% neg current 
+
+			%sol.I = y_sol(I_start_idx:I_end_idx);
+			sol.I = Ip - In; 
+
+			I_check = y_sol(I_start_idx:I_end_idx);
+
+
+
+        	sol.x = y_sol(x_start_idx:x_end_idx); 
+
+	        sol.tau = T*sol.x + d; 	% Total torque output 
+
+	        % calculate compensation torque 
+	        % TODO -- make sure to account for zero vel frictoi cone in outputs 
+	        driving = [sol.tau .* sign_omega > 0];
+	        driven =  [sol.tau .* sign_omega < 0];
+	        zero_vel = [sign_omega == 0];
+	        static_motor_friction = zeros(n, 1); 
+	        static_motor_friction(zero_vel_idxs) = y_sol(zv_start_idx:zv_end_idx);
+
+	        sol.tau_friction = -alph*(tau_motor_friction.*(eta*driving + ...
+	        					driven/eta) -  static_motor_friction);
+	        sol.tau_inertia = -alph*tau_motor_inertia.*(eta*driving + ...
+	        				driven/eta + zero_vel) - tau_gearbox_inertia;
+
+	        tau_m = k_t * sol.I; % from current 
+
+	        sol.tau_em = alph*(tau_m.*(eta*driving + driven/eta + zero_vel)); 
+
+
+	        % TODO -- friction compensatoin torque 
+	        % TODO -- inertial compensation torque
+
+	        % Everything should line 
+
+	        % Add debug to settings 
+	        
+	        % TODO -- Fill in more debug 
+	        if obj.settings.debug % add more things to output 
+
+	        	Ip = y_sol(Ip_start_idx:Ip_end_idx);    % pos current 
+	        	In = y_sol(In_start_idx:In_end_idx);	% neg current 
+	        	I = Ip - In;
+
+	        	% Making sure everything adds up 
+	        	tau_check = sol.tau - (sol.tau_friction + sol.tau_inertia);
+
+	        	%assert(max(abs(tau_check - sol.tau_em)) < 1e-6,...
+	        	%					 'Torques do not add up');
+
+
+
+
+
+	        	% The real questoin is how much does this model 
+	        	% of inertial compensatoin matter??????????
+	        	% vs lumped inertial compensatoin past motor
+
+	        	% Check Validity of Proof 
+
+	        	% Ip OR  In always negative 
+	        	%IpIn = Ip.*In; 
+	        	[max_current_error, mce_idx] = max(min(Ip, In)); 
+
+	        	% Maximum Error From Convex Reformulation 
+	        	max_objective_error = obj.settings.rho*sum(Ip + In);% in objective value
+
+
+	        	if eta < 1
+	        		sol.I_gm = y_sol(gm_start_idx:gm_end_idx);
+	        		sol.I_mu = y_sol(mu_start_idx:mu_end_idx);
+
+	        		gm = sol.I_gm;
+	        		mu = sol.I_mu;
+
+	        		gm_lb = lb(gm_start_idx:gm_end_idx);
+					gm_ub = ub(gm_start_idx:gm_end_idx);
+
+					mu_lb = lb(mu_start_idx:mu_end_idx);
+					mu_ub = ub(mu_start_idx:mu_end_idx);
+		
+
+	        		gm_diff = sol.I_gm - I_comp;
+	        		mu_diff = sol.I_mu - I_comp;
+
+	        		[max_gm_mu_error, mgme_idx] = max(min(abs(gm_diff), abs(mu_diff)));
+
+	       %{ 
+        % Index Map for Optimization 
+        I_start_idx = 1;
+        I_end_idx = n; 
+
+        % For code reuse, keep +/- decomp even if eta == 1
+        Ip_start_idx = n + 1; 
+        Ip_end_idx = 2*n; 
+
+        In_start_idx = 2*n + 1;
+        In_end_idx = 3*n; 
+        %} 
+
+	        		%if max_gm_mu_error > 1e-2
+	        		if (eta < 1) && (min(I_comp) < 0 )
+
+	        			I_l = -I_u; 
+
+						rho = obj.settings.rho;
+	        			
+
+		        		cvx_begin quiet 
+		        			variable tau_out(n, 1); 
+		        			variable gm_cvx(n, 1);
+		        			variable mu_cvx(n, 1);
+		        			variable I_abs(n, 1);
+		        			variable I_cvx(n, 1);
+		        			variable x_cvx(w, 1);
+		        			variable y_cvx(dim_y, 1);
+		        			%binary variable delta(n, 1);
+		        			variable delta(n, 1);
+		        			variable bet(n, 1); 
+		        			%variable sig(n, 1); 
+		        			%variable phi(n, 1); 
+		        			variable z(n, 1); 
+		        			variable theta(n, 1); 
+
+		        			minimize rho*(sum(gm_cvx) - sum(mu_cvx)) + (diag(Q0)'*z) + (c0'*I_cvx) + beta0 + quad_form(x_cvx, M0) + (r0'*x_cvx);
+
+		        			subject to 
+		        				abs(I_cvx) <= I_abs;
+		        				T*x_cvx + d_comp == tau_out; 
+		        				tau_out == alph*k_t*(eta*gm_cvx + (1/eta)*mu_cvx);
+		        				gm_cvx >= 0; 
+		        				mu_cvx <= 0; 
+		        				gm_cvx + mu_cvx == I_cvx - I_comp; 
+
+
+		        				% SIGMA AND PHI DO NOTHING HERE 
+		        				% 
+
+
+		        				%tau_out == alph*eta*k_t*sig + (alph*k_t/eta)*phi; 
+		        				%sig + phi == I - I_comp; 
+
+		        				0 <= delta;
+		        				delta <= 1; 
+		        				bet + delta == 1; 
+
+		        				% FUN = I_comp - I, Fun Min = I_comp - I_u
+		        				% FIN mAx = I_com - I_l
+
+		        				epss = 1e-13; 
+
+		        				I_comp - I_cvx <= (I_comp - I_l).*(1 - delta);
+		        				I_comp - I_cvx >= epss + delta.*(I_comp - I_u - epss);
+		        				
+
+		        				gm_cvx + epss + (I_l - epss).*delta <= 0; 
+		        				mu_cvx + epss + (I_l - epss).*bet <= 0;   % REDUNDANT? 
+
+		        				%sig <= I_u .* delta;
+		        				%sig >= 0; 
+		        				%sig >= gm_cvx - I_u.*(1 - delta); 
+
+		        				%phi <= 0;
+		        				%phi >= I_l .* bet; 
+		        				%phi <= mu_cvx - I_l.*(1 - bet); 
+		        				%phi >= mu_cvx - 0;
+
+		        				z >= 0; 
+		        				theta >= 0;
+
+		        				theta + 2*I_cvx.*I_comp - I_comp.^2 <= z; 
+		        				
+		        				(gm_cvx - mu_cvx).^2 <= theta;
+
+
+		        				% cvx somehow saying infeasible 
+		        				% when setup as integer program 
+
+		        				% perhaps how its hadling booleans? 
+
+		        				I_abs.^2 <= z; 
+
+		        				if ~isempty(H)
+		        					H*x_cvx + b == 0; 
+		        				end 
+
+		        				if ~isempty(H_ineq)
+		        					H_ineq*x_cvx + b_ineq_H <= 0 ;
+		        				end 
+
+		        				I_abs <= I_u; % should limit 
+
+		        				y_cvx(1:n) == I_cvx;
+		        				y_cvx(n+1:2*n) == I_abs; % for quad costs   
+		        				y_cvx(end - w + 1:end) == x_cvx; 
+
+		        				% Quadrati constrsaints 
+		        				for j = 1:numel(quadcon)
+		        					Qc_tmp = quadcon(j).Qc;
+		        					q_tmp = quadcon(j).q; 
+		        					beta_tmp = -quadcon(j).rhs;
+
+
+		        					% Split into components 
+		        					Qj = Qc_tmp(n+1:2*n, n+1:2*n); % quad cost part 
+		        					cj = q_tmp(1:n);
+
+		        					Mj = Qc_tmp(end - w + 1:end, end - w + 1:end); 
+		        					rj = q_tmp(end - w + 1:end);
+
+		        					qd = diag(Qj);
+							        (qd'*z) + (cj'*I_cvx) + quad_form(x_cvx, Mj) + (rj'*x_cvx) - beta_tmp <= 0 ;
+							    end 
+
+
+							    for j = 1:n
+							    	if I_comp(j) >= 0 
+							    		gm_cvx(j) - mu_cvx(j) <= I_abs(j) + I_comp(j);
+							    	else
+							    		% same as before, not helpful							    	
+							    		gm_cvx(j) - mu_cvx(j) <= I_abs(j) - I_comp(j);
+							    	end 
+
+
+									quad_over_lin(gm_cvx(j), delta(j)) + quad_over_lin(-mu_cvx(j), bet(j)) <= theta(j);
+		        				
+
+
+
+							    end 
+						  
+						cvx_end 
+
+						display(result)
+						display(cvx_optval)
+
+		        		[max_gm_mu_cvx, mgme_cvx_idx] = max(min(abs(gm_cvx - (I_cvx - I_comp)),...
+		        							 abs(mu_cvx - (I_cvx - I_comp))));
+		        		
+
+
+		        		display(max_gm_mu_cvx);
+
+
+		        		if max_gm_mu_cvx > 5e-2
+		        			disp('.......awww fuckkkkkkkkkkkkkkkkk');
+		        			keyboard
+		        		else 
+		        			disp('we gucciiiiiiiiii?')
+		        		end 
+
+
+
+		        		min_I = min(I_cvx);
+		        		display(min_I); 
+
+
+		        		% HONESTLY WHAT REALLY MATTERS IS TORQUE ERROR 
+
+
+		        	end 
+						        		% Process results from CVX 
+
+
+
+
+	        		if max_gm_mu_error > 1e-2
+
+	        			disp('....')
+	        			disp('max gm mu error')
+
+
+	        			vel_at_error = omega(mgme_idx);
+	        			comp_current_at_error = I_comp(mgme_idx);
+	        			display(mgme_idx)
+
+
+	        			I_comp_bad = I_comp(mgme_idx);
+	        			gm_bad = gm(mgme_idx);
+	        			mu_bad = mu(mgme_idx);
+
+	        			Ip_bad = Ip(mgme_idx);
+	        			In_bad = In(mgme_idx);
+	        			I_bad = I(mgme_idx);
+
+
+
+	        			display(max_current_error);
+	        			display(max_gm_mu_error);
+	        		    display(vel_at_error);
+	        			display(comp_current_at_error);
+	        			keyboard
+
+	        		end 
+
+	        	end 
+
+	        	if max_current_error > 1e-2		% 10 mA 
+	        		disp('max current error')
+
+	        		vel_at_error = omega(mce_idx);
+	        		comp_current_at_error = I_comp(mce_idx);
+
+
+	        		I_bad = I(mce_idx);
+	        		Ip_bad = Ip(mce_idx);
+	        		In_bad = In(mce_idx); 
+
+	        		display(max_current_error);
+	        		display(max_gm_mu_error);
+	        		display(vel_at_error);
+	        		display(comp_current_at_error);
+	        		keyboard;
+	        	end 
+
+
+	        	%if max(abs(tau_check - sol.tau_em)) > 5e-4
+	        	if max(abs(tau_check - sol.tau_em)) > 1e-2
+
+	        		tmp = abs(tau_check - sol.tau_em);
+	        		max_tau_error = max(tmp);
+	        		display(max_tau_error); 
+
+	        		disp('Torque matchup error')
+	        		keyboard
+	        	end 
+
+
+
+
+	        	% PRINTS 
+
+	        end 
 
 
 
         end 
 
+        
 
 
         solve_time = toc(start_tic);
 
 
-        % TODO Some debug verifcation that is usually skipped 
 
     end 
 
