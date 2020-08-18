@@ -38,7 +38,7 @@ properties (GetAccess = public, SetAccess = private)
     omega_dot 
     % indices in omega corresponding to omega == 0 
     zero_vel_idxs  	% computed once for each inputs to help solve time 
-    Q
+    Q   % cell array of the diagonal vectors of the Q matrices 
     c
     M   % can encode SOCP  
     r
@@ -242,7 +242,7 @@ methods (Access = public)
     % Method: update_problem
     % 
     % Inputs: 
-
+    		% NOTE: maybe rename 
     %
     %   Added:   
     %**********************************************************************
@@ -289,10 +289,6 @@ methods (Access = public)
         	H_ineq = problem_data.H_ineq;
         	b_ineq = problem_data.b_ineq; 
         end 
-
-
-
-
 
         n = length(omega);  
         m = numel(Q) - 1; 
@@ -364,18 +360,25 @@ methods (Access = public)
         % when f_j is encoding linear inequality -- its more  
         % efficient to explicitly encode these as linear constrainrts
         % intead of SOC constraints with empty matrices 
-        Q_empty = sparse(n, n);
+
+        % We will convert Q to vectors containing the diagonal 
+        % Do we want to change it in the input???????
+        % NOTE: whats easier for the user 
+
+
+
+        Q_empty = zeros(n, 1);  % the diagonal 
         M_empty = sparse(w, w); 
         c_empty = zeros(n, 1);    
         r_empty = zeros(w, 1);   
 
-        lin_ineq = zeros(m, 1); 
+        lin_ineq = zeros(m, 1);   % Indicator (1 = linear)
 
         % Letting c,r,beta be fixed instead of function handles can 
         % greatly speed up code 
         for j = 1:m + 1
-            Qj = Q{j}(test_motor, test_gearbox); 
-            Mj = M{j}(test_motor, test_gearbox); 
+            Qj = Q{j}(test_motor, test_gearbox); % to test validity 
+            Mj = M{j}(test_motor, test_gearbox); % to test validity 
 
             if j == 1
                 Q0_test = Qj;  % used in veryfying fractional inputs 
@@ -400,14 +403,12 @@ methods (Access = public)
                 rj = r{j};
             end 
 
-            if isempty(Qj); Q{j} = @(~, ~) Q_empty; end 
-            if isempty(Mj); M{j} = @(~, ~) M_empty; end 
+            if isempty(Qj); Q{j} = @(~, ~) Q_empty; Qj = Q_empty; end  % fill in with vector 
+            if isempty(Mj); M{j} = @(~, ~) M_empty; Mj = M_empty; end  % fill in with empty sparse 
 
-            assert(issparse(Qj) || isempty(Qj),...
-                             'update_problem: Q matrices must be sparse');
+
             assert(issparse(Mj) || isempty(Mj),...
                              'update_problem: M matrices must be sparse');
-            assert(issymmetric(Qj), 'update_problem: Q matrices must be symmetric');
             assert(issymmetric(Mj), 'update_problem: M matrices must be symmetric');
             assert(size(Mj, 1) == w || isempty(Mj), 'size of T or M%d incorrect', j-1);
 
@@ -422,23 +423,28 @@ methods (Access = public)
             			     					'satisfy c .* omega >= 0'], j-1); 
 
 
-            if nnz(Qj) == 0 % empty 
-                if (nnz(Mj) == 0) && (j > 1)
-                    lin_ineq(j - 1) = 1; 
-                end 
-            else % check PSD 
-                % Index out block matrix
-                [row, col, ~] = find(Qj);  
-                % find works in order of increasing col. idx 
-                % within each col, increasing row idx 
-                %unique_col = unique(col); 
-                unique_col = find(any(Qj)); % faster 
+            % TODO -- size check on Q
+            % NOTE: is there a cleaner code way to verify size 
+  			assert(isempty(Qj) || ((size(Qj, 1) == n) && (size(Qj, 2) == 1)) ||...
+  						 (issparse(Qj) && isdiag(Qj)) ,...
+            		 ['update_problem: Q matrices must be sparse diagonal '...
+            		 'matrix or non-sparse N x 1 vector specify diagonal elements ']);
 
-                Q_small = Qj(:, unique_col); 
-                Q_small = full(Q_small(unique_col, :)); 
-                eig_vals = eig(Q_small); 
-                assert(min(eig_vals) >= 0, 'Each Q must be positive semidefinite');
+            % Convert All Qs to vectors of diagonal - more efficient 
+            if size(Qj, 2) > 1 % if not col vector 
+            	Qj = full(diag(Q{j}(test_motor, test_gearbox)));
+            	% Now always returns a vcetor 
+            	% NOTE: may note need "FULL"
+            	Q{j} = @(motor, gearbox) full(diag(Q{j}(motor, gearbox)));
             end 
+
+            % TODO -- clean up or at least group some of the Q business 
+            assert(min(Qj) >= 0,...
+                   'Diagonal entries of Q matrices must be non-negative');
+
+            if (nnz(Mj) == 0) && (j > 1)  % because using linear on Q
+                lin_ineq(j - 1) = 1; 
+            end
 
             if nnz(Mj) > 0
                 [row, col, val] = find(Mj)
@@ -455,7 +461,6 @@ methods (Access = public)
                     assert(nnz(rj) == w, 'Linear term must be empty for SOC constraints'); 
 
                     % TODO -- what about constant term???? 
-
                     % ...... if solving with gurobi dont need to do anything 
                     % NOTE: should check that its still valid
                     % one negative eig does not neccesarilt 
@@ -473,7 +478,7 @@ methods (Access = public)
                     else        
                         tmp_idxs = find(v)
                         idxs = unique_col(tmp_idxs);
-                        lb(x_start_idx + idxs - 1) = 0; % non-negativity if not already there 
+                        lb(x_idxs(1) + idxs - 1) = 0; % non-negativity if not already there 
                         % Given that its symmetric, not sure if need any more 
                         %{ 
                         if nnz(v) == 2 % Rotated SOC 
@@ -892,516 +897,32 @@ methods (Access = private)
 
     	start_tic = tic; 		% to get timing 
 
-        % rename cutoff to "bound" and then check problem type 
-        if strcmp(obj.problem_type, 'standard')
-            cutoff = bound; 
-        elseif strcmp(obj.problem_type, 'fractional')
-            cutoff = inf; 
-            assert(~isinf(bound), 'Bound must be finite for fractional problems');
-        else 
-            error('Invalid problem type');
-        end 
+    	[matrices,  cutoff, index_map] = obj.build_matrices(motor, gearbox, bound); 
+    	Q_cost = matrices.Q_cost;
+    	c_cost = matrices.c_cost;
+    	c_rho_aug = matrices.c_rho_aug;
+    	beta0 = matrices.beta0;
+    	A_eq = matrices.A_eq;
+    	b_eq = matrices.b_eq;
+		A_ineq = matrices.A_ineq; 
+		b_ineq = matrices.b_ineq; 
+		lb = matrices.lb; 
+		ub = matrices.ub; 
+		quadcon = matrices.quadcon;
+		dim_y = length(lb);
 
-        % How we actually "solve" will depend on solver
-        % Gurobi OR Sedumi OR ECOS 
-        % 
-        % SOCP implicit for Gurobi solve (looks like a stanrd QCQP)
-        omega = obj.omega; 
-        omega_dot = obj.omega_dot; % may be all zeros 
 
-        eta = gearbox.eta; 
-        alph = gearbox.alpha; 
-        k_t = motor.k_t; 
 
-        H = obj.H(motor, gearbox);
-        b = obj.b(motor, gearbox);
-        H_ineq = obj.H_ineq(motor, gearbox);
-        b_ineq = obj.b_ineq(motor, gearbox);
 
-
-        T = obj.T(motor, gearbox);
-        tau_gearbox_inertia = gearbox.inertia * (alph^2) * omega_dot; 
-        d = obj.d(motor, gearbox); 
-        d_comp = d + tau_gearbox_inertia; % NOTE: gb addition
-        
-        I_u = obj.I_u(motor, gearbox);  % symmetric bounds, dont need I_l
-
-        % dimensions 
-        n = obj.n; 
-        w = obj.w;
-        p = obj.p;
-        m = obj.m; 
-
-        zero_vel_idxs = obj.zero_vel_idxs; 
-        nzvi = length(zero_vel_idxs); 
-
-        % NOTE the distinction at omega = 0 (also, could precomp)
-        sign_omega = sign(omega); 		% = 0 if omega = 0 
-        so = round(sign_omega + 0.1); 	% = 1 if omega = 0  
-
-        %
-        % 		Friction and Inertia 
-        %
-
-        % TODO -- whats the best general way to handle static friction
-        % Should there be a call to a function which determines 
-        % friction model based of settings? 
-        tau_friction_static = 1.1 * k_t * motor.I_nl;  
-
-        % tau_motor_friction is JUST kinetic 
-        tau_motor_friction = k_t * motor.I_nl * sign_omega; % NOTE: Incorp other friction models 
-        
-
-        % Since BEFORE gearbox only multiplied by alpha NOT alpha^2 
-        % will effectively get multiplied by alpha again when it goes 
-        % throug the gearbox 
-        tau_motor_inertia = motor.inertia * alph * omega_dot; 
-        
-  		% Dynamic Motor Friction and Inertia Compensation  (f - fric, j- inerits )
-        tau_mfj = tau_motor_friction + tau_motor_inertia; 
-        I_comp = tau_mfj/k_t; % corresponding current 
-
-
-        % Index Map for Optimization 
-        I_start_idx = 1;
-        I_end_idx = n; 
-
-        % For code reuse, keep +/- decomp even if eta == 1
-        Ip_start_idx = n + 1; 
-        Ip_end_idx = 2*n; 
-
-        In_start_idx = 2*n + 1;
-        In_end_idx = 3*n; 
-
-        if eta < 1 
-            dim_y = 5*n + w + nzvi;  % total dimension of opt vector 
-        else 
-            dim_y = 3*n + w + nzvi; 
-        end 
-
-        lb = -inf(dim_y, 1); 
-        ub = inf(dim_y, 1); 
-
-        %  Ip - In = I 
-        A_eq_tau1 = zeros(n, dim_y);    % sparse? 
-        A_eq_tau1(:, Ip_start_idx:Ip_end_idx) = eye(n);
-        A_eq_tau1(:, In_start_idx:In_end_idx) = -eye(n);
-        A_eq_tau1(:, I_start_idx:I_end_idx) = -eye(n);
-        b_eq_tau1 = zeros(n, 1); 
-
-
-
-        % Remove after fix 
-        A_eq_tau3 = []; 
-        b_eq_tau3 = []; 
-
-   
-
-        if eta < 1 
-            gm_start_idx = 3*n + 1;
-            gm_end_idx = 4*n;
-
-            mu_start_idx = 4*n + 1; 
-            mu_end_idx = 5*n; 
-
-            x_start_idx = 5*n + 1; 
-            x_end_idx = x_start_idx + w - 1; 
-
-            % Equality Constraints on these variables
-            % mu + gamma - sign(omega)*I_nl = I 
-            A_eq_tau2 = zeros(n, dim_y);   % sparse? 
-            A_eq_tau2(:, gm_start_idx:gm_end_idx) = eye(n);
-            A_eq_tau2(:, mu_start_idx:mu_end_idx) = eye(n);
-            % TODO -- remove current from the formulation 
-            A_eq_tau2(:, I_start_idx:I_end_idx) = -eye(n); %------------------------
-			%A_eq_tau2(:, Ip_start_idx:Ip_end_idx) = -eye(n); %++++++++++++++++++++++
-			%A_eq_tau2(:, In_start_idx:In_end_idx) = eye(n);  %+++++++++++++++++++++
-            b_eq_tau2 = I_comp; 
-
-            % Tx + d = motor/gearbox torque 
-            A_eq_tau_x = zeros(n, dim_y);    % sparse? 
-            A_eq_tau_x(:, x_start_idx:x_end_idx) = -T; 
-            A_eq_tau_x(:, gm_start_idx:gm_end_idx) = alph*eta*k_t*eye(n);
-            A_eq_tau_x(:, mu_start_idx:mu_end_idx) = (alph*k_t/eta)*eye(n);
-            %b_eq_tau_x = d + alph*k_t*(eta + 1/eta)*so.*I_nl; 
-            b_eq_tau_x = d_comp + alph*(eta + 1/eta)*tau_mfj; 
-
-
-
-            % Ineqaulity constraints containting multiple variables 
-            % (if one variable, more computationally efficient to handle with bound
-            % constraints )
-
-            % sign(omega)*(gamma- mu) - I_nl - Ip - In <= 0 
-            % sign(omega)*(gamma - mu) - abs(tau_fric/kt) - tau_inertia? 
-            A_ineq_tau = zeros(n, dim_y);  
-            A_ineq_tau(:, gm_start_idx:gm_end_idx) = diag(so);
-            A_ineq_tau(:, mu_start_idx:mu_end_idx) = -diag(so);
-            A_ineq_tau(:, Ip_start_idx:Ip_end_idx) = -eye(n);
-            A_ineq_tau(:, In_start_idx:In_end_idx) = -eye(n);  
-            %b_ineq_tau = so.*I_comp; %----------------------------------------
-            
-            %b_ineq_tau = motor.I_nl - so.*(tau_motor_inertia/k_t); 
-            %b_ineq_tau = -(I_comp);
-
-            
-            b_ineq_tau = 100 * ones(n, 1); % removes thus 
-            %
-            %b_ineq_tau = zeros(n, 1);
-            for i = 1:n 
-
-            	if (so(i) == 1)
-            		if I_comp(i) >= 0  % standard friction case 
-            			b_ineq_tau(i) = I_comp(i);  % CORRECT (STANDARD )
-            		else 
-            			%b_ineq_tau(i) = eta * I_comp(i); % I think????
-
-
-            			% Not wrong but not helpful enough?
-            			b_ineq_tau(i) = -I_comp(i);
-
-            			% ending up with gm = 0 
-            			% and mu = -In + I_comp 
-            			% want -- mu = -In, gm = I_comp 
-
-
-            			% IS IT POSSIBLE THAT WE ARE GETTING THESE 
-            			% ERRORS BUT THE SOLUTOIN IS EQUIVALENT?? 
-
-            			% HOW TO CHECK THIS IS WITH A CLEAN UP 
-
-            			% CLEAN THE SOLUTION AND CHECK HOW MUCH 
-            			% THE COST IS ALTERED 
-            			% THEN WE ARE TALKING ABOUT AN OPTIMAL POINT 
-            			% VS THE OPTIMAL POINT
-
-            			% ASSUME CURRENT AND WORK BACKWARD FROM THERE 
-            			% OK. TRY THIS NEXT
-            			%{
-            			if isempty(A_eq_tau3); disp('fffff'); end 
-
-            			Aug3 = zeros(1, dim_y);
-            			Aug3(1, gm_start_idx + i - 1) = 1;
-            			Aug3(1, mu_start_idx + i - 1) = -1;
-            			Aug3(1, Ip_start_idx + i - 1) = -1;
-            			Aug3(1, In_start_idx + i - 1) = -1;
-
-            			A_eq_tau3 = [A_eq_tau3; Aug3];
-            			b_eq_tau3 = [b_eq_tau3; -I_comp(i)];
-            			%}
-
-            			%b_ineq_tau(i) = 0; 
-            		end 
-            	else
-            		if I_comp(i) <= 0 % standard frictoin case
-            			b_ineq_tau(i) = -I_comp(i);    % CORRECT (STANDARD)
-            		else 
-            			b_ineq_tau(i) = - (1/eta) * I_comp(i); % HELP ME 
-            		end 
-            	end 
-
-            end 
-            
-
-            % FILL IN 
-
-                 % Experimental 
-      		  %Tx + d = outpiut torque <= kt*alpha*min{eta(I - Icomp), (I - Icomp)/eta}
-        	
-        	% gets us further without error -- maybe some merit -- think on it more 
-
-        	% WE ARE HITTING ERRORS AT THE PEAK ACCCELERATOINS JUST FYI 
-        	%
-        	%
-        	%
-        	A_ineq_tau2 = []; 
-        	b_ineq_tau2 = [];
-
-            A_ineq_tau2 = zeros(2*n, dim_y);
-            A_ineq_tau2(:, x_start_idx:x_end_idx) = [T; T]; 
-            A_ineq_tau2(1:n, I_start_idx:I_end_idx) = -k_t*alph*eta*eye(n);
-            A_ineq_tau2(n+1:end, I_start_idx:I_end_idx) = -k_t*(alph/eta)*eye(n);
-
-            b_ineq_tau2 = [-d_comp - k_t*alph*eta*I_comp;...
-            				 -d_comp - k_t*(alph/eta)*I_comp]; 
-
-            A_ineq_tau = [A_ineq_tau; A_ineq_tau2];
-            b_ineq_tau = [b_ineq_tau; b_ineq_tau2]; 
-
-
-            % Bounds on individual variables (ie. box constraints)
-            % TODO -- what happens with infeasibly large accelerations 
-            % where I_comp is very big??? (and causes to exceed limits)
-            % If sign(omega) = 1, lower bound on gm is I_nl
-            % and upper bound I_u + I_nl 
-            % If sign(omega) = -1, upper bound on gm is -I_nl 
-            % lower bound is -I_u - I_nl 
-
-
-            %I_nl = motor.I_nl; 
-            % lb(gm_start_idx:gm_end_idx) = min(so.*I_nl,  so.*(I_nl + I_u));
-            %ub(gm_start_idx:gm_end_idx) = max(so.*I_nl,  so.*(I_nl + I_u));
-
-			lb(gm_start_idx:gm_end_idx) = min(I_comp,  I_comp + (so.*I_u));
-            ub(gm_start_idx:gm_end_idx) = max(I_comp,  I_comp + (so.*I_u));
-
-
-            % If sign(omega) = 1, upper bound on mu is I_nl
-            % and lower bound -I_u + I_nl 
-            % If sign(omega) = -1, lower bound on mu is -I_nl 
-            % upper bound is I_u - I_nl
-            % We force mu = I_comp when omega = 0 (hence sign_omega instead of so)      
-			lb(mu_start_idx:mu_end_idx) = min(I_comp,...
-										  I_comp - (sign_omega.*I_u));
-            ub(mu_start_idx:mu_end_idx) = max(I_comp,...
-            							  I_comp - (sign_omega.*I_u));
-
-
-          	%lb(mu_start_idx:mu_end_idx) = min(so.*I_nl,  so.*(I_nl - I_u));
-            %ub(mu_start_idx:mu_end_idx) = max(so.*I_nl,  so.*(I_nl - I_u));
-
-        else   % Direct drive or fully efficient gearbox 
-            x_start_idx = 3*n + 1; 
-            x_end_idx = x_start_idx + w - 1; 
-
-           
-            A_eq_tau_x = zeros(n, dim_y);    % sparse? 
-            A_eq_tau_x(:, x_start_idx:x_end_idx) = -T; 
-            A_eq_tau_x(:, I_start_idx:I_end_idx) = alph*k_t*eye(n); %--------------------
-            %A_eq_tau_x(:, Ip_start_idx:Ip_end_idx) = alph*k_t*eye(n); %++++++++++++++++++
-            %A_eq_tau_x(:, In_start_idx:In_end_idx) = -alph*k_t*eye(n); %+++++++++++++++++
-            b_eq_tau_x = d_comp + alph*k_t*I_comp; 
-
-            A_eq_tau2 = []; 
-            b_eq_tau2 = []; 
-
-            A_ineq_tau = [];
-            b_ineq_tau = []; 
-        end 
-
-    
- 		% Zero Vel - Use Static Friction 
-        zv_start_idx = x_end_idx + 1; 
-        zv_end_idx = zv_start_idx + nzvi - 1; 
-
-        if nzvi > 0 
-        	% TODO -- probably consider gb fully efficient at zero vel?
-        	% think through a little more (but then just alpha on next line)
-            A_eq_tau_x(zero_vel_idxs, zv_start_idx:zv_end_idx) = alph;
-
-            % Overwrite the other zero vel points, treat gb as fully eff 
-            if eta < 1
-            	A_eq_tau_x(zero_vel_idxs, gm_start_idx + zero_vel_idxs - 1) = alph*k_t;
-            	A_eq_tau_x(zero_vel_idxs, mu_start_idx:mu_end_idx) = 0;
-            	b_eq_tau_x(zero_vel_idxs) = d_comp(zero_vel_idxs) + alph*k_t*I_comp(zero_vel_idxs);
-            end 
-
-            % Friction Cone 
-            A_ineq_zv = zeros(2*nzvi, dim_y);
-            A_ineq_zv(1:nzvi, zv_start_idx:zv_end_idx) = 1; 
-            A_ineq_zv(nzvi + (1:nzvi), zv_start_idx:zv_end_idx) = -1; 
-            b_ineq_zv = tau_friction_static * ones(2*nzvi, 1);
-
-            A_ineq_tau = [A_ineq_tau; A_ineq_zv];
-            b_ineq_tau = [b_ineq_tau; b_ineq_zv];
-        end 
-
-
-        %A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau_x];
-        %b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau_x];
-        % TODO -----------------------------------------------------------------
-        A_eq_tau = [A_eq_tau1; A_eq_tau2; A_eq_tau3; A_eq_tau_x];
-        b_eq_tau = [b_eq_tau1; b_eq_tau2; b_eq_tau3; b_eq_tau_x];
-
-
-        % Fill in variable bounds on I, Ip, In 
-        lb(I_start_idx:I_end_idx) = -I_u; 
-        ub(I_start_idx:I_end_idx) = I_u; 
-
-        lb(Ip_start_idx:Ip_end_idx) = 0;    % non-negativity 
-        ub(Ip_start_idx:Ip_end_idx) = I_u; 
-
-        lb(In_start_idx:In_end_idx) = 0;    % non-negativity
-        ub(In_start_idx:In_end_idx) = I_u; 
-
-
-        if ~isempty(H)
-            A_eq_h = zeros(size(H, 1), dim_y);
-            A_eq_h(:, x_start_idx:x_end_idx) = -H;   % note signs
-        else 
-            A_eq_h = [];
-        end
-
-        A_eq = [A_eq_tau; A_eq_h]; 
-        b_eq = [b_eq_tau; b]; % NOTE signs 
-
-        % there is some processing to do here for if 
-        % general constraints are SOCP OR QCP or simple inequality 
-        % Dont want to need to redo analyis 
-
-        % COULD define a seperate general inequality 
-        % for when all quadratic terms are empty
-        % fill this up in preprocessing and then this step
-        % becomes easier 
-        num_lin_ineq = nnz(obj.lin_ineq);
-        num_quadcon = m - num_lin_ineq;
-
-        if num_lin_ineq > 0 
-            A_ineq_other = zeros(num_lin_ineq, dim_y);
-            b_ineq_other = zeros(num_lin_ineq, 1); 
-            idxs = find(obj.lin_ineq); 
-        else 
-            A_ineq_other = []; 
-            b_ineq_other = [];
-        end 
-
-        if num_quadcon > 0 
-            quadcon = struct(); % struct for quadratic/SOC constraints 
-        end 
-
-        qc_idx = 0; 
-        lin_ineq_idx = 0; 
-
-        for j = 1:m    % incorporate the quadratic constraints + other linear ineqs 
-            cj = obj.c{j + 1};  % +1 bc 1 indexing 
-            if isa(cj, 'function_handle')
-                c_tmp = cj(motor, gearbox); 
-            else 
-                c_tmp = cj;
-            end 
-
-            rj = obj.r{j + 1};   % WHY SO SLOW ? - NOT EMPTY             
-            if isa(rj, 'function_handle')
-                r_tmp = rj(motor, gearbox); % slow 
-            else 
-                r_tmp = rj; 
-            end 
-            
-            bet = obj.beta{j + 1}; 
-            if isa(bet, 'function_handle')
-                beta_tmp = bet(motor, gearbox); % slow 
-            else 
-                beta_tmp = bet; 
-            end 
-            q_tmp = zeros(dim_y, 1); 
-            q_tmp(I_start_idx:I_end_idx) = c_tmp; 	%----------------------------------------------
-			%q_tmp(Ip_start_idx:Ip_end_idx) = c_tmp;   %+++++++++++++++++++++++++++++
-			%q_tmp(In_start_idx:In_end_idx) = -c_tmp;   %+++++++++++++++++++++++++++++++++++
-            q_tmp(x_start_idx:x_end_idx) = r_tmp; 
-
-            if obj.lin_ineq(j)  % if linear 
-                lin_ineq_idx = lin_ineq_idx + 1; 
-                A_ineq_other(lin_ineq_idx, :) = q_tmp'; 
-                b_ineq_other(lin_ineq_idx) = -beta_tmp;
-            else  % quad constraints 
-                qc_idx = qc_idx + 1; 
-                Qj_tmp = obj.Q{j + 1}(motor, gearbox); % +1 bc 1 indexing 
-                Mj_tmp = obj.M{j + 1}(motor, gearbox); 
-
-                num_vals = 2*nnz(Qj_tmp) + nnz(Mj_tmp); 
-                
-                % NOTE -- could speed these up 
-                Qc_tmp = sparse([], [], [], dim_y, dim_y, num_vals); % NOTE: initializing as sparse will help speed 
-                Qc_tmp(Ip_start_idx:Ip_end_idx, Ip_start_idx:Ip_end_idx) = Qj_tmp; 
-                Qc_tmp(In_start_idx:In_end_idx, In_start_idx:In_end_idx) = Qj_tmp; 
-                
-                Qc_tmp(x_start_idx:x_end_idx, x_start_idx:x_end_idx) = Mj_tmp; 
-
-                quadcon(qc_idx).Qc = Qc_tmp; 
-                quadcon(qc_idx).q = q_tmp; 
-                quadcon(qc_idx).sense = '<'; 
-                quadcon(qc_idx).rhs = -beta_tmp; 
-            end 
-
-        end 
-
-
-        if strcmp(obj.problem_type, 'fractional')
-            % Augment H with equality 
-            A_aug = zeros(2, dim_y); 
-            A_aug(1, x_start_idx:x_end_idx) = obj.r_num - bound*obj.r_den;
-            
-            % Constrain denominator to be positive  
-            A_aug(2, x_start_idx:x_end_idx) = -obj.r_den; % nonnegativitiy 
-            b_aug = [bound*obj.beta_den - obj.beta_num; obj.beta_den];
-        
-        elseif strcmp(obj.problem_type, 'standard')
-            A_aug = []; 
-            b_aug = []; 
-        else 
-            error('Invalid Problem type ');
-        end 
-
-        % Add the linear inequalities in H_ineq, b_ineq
-        if ~isempty(H_ineq)
-        	% Add these to A_ineq other 
-        	A_ineq_H = sparse([], [], [], size(H_ineq, 1), dim_y, nnz(H_ineq));
-        	A_ineq_H(:, x_start_idx:x_end_idx) = H_ineq; 
-        	b_ineq_H = b_ineq; 
-
-        	A_ineq_other = [A_ineq_other; A_ineq_H];
-        	b_ineq_other = [b_ineq_other; -b_ineq_H]; % NOTE signs 
-        end  
-
-
-        % TODO -- naming -- dont over b_ineq name 
-        A_ineq = [A_ineq_tau; A_ineq_other; A_aug];
-        b_ineq = [b_ineq_tau; b_ineq_other; b_aug];
-
-
-        num_eq = length(b_eq);  
-        num_ineq = length(b_ineq); 
-        sense = [repmat('=', num_eq, 1); repmat('<', num_ineq, 1)]; 
-
-        A_all = sparse([A_eq; A_ineq]); 
-        b_all = [b_eq; b_ineq]; 
-
-
-        %% ----- Incorporate Actual Cost --------------
-        Q_cost = sparse([], [], [], dim_y, dim_y, 2*n^2 + w^2); % TODO -- sparse 
-
-        Q0 = obj.Q{1}(motor, gearbox); 
-        M0 = obj.M{1}(motor, gearbox); 
-
-        c0_tmp = obj.c{1};
-        if isa(c0_tmp, 'function_handle')
-            c0 = c0_tmp(motor, gearbox)
-        else 
-            c0 = c0_tmp;
-        end 
-        
-        r0_tmp = obj.r{1};
-        if isa(r0_tmp, 'function_handle')
-            r0 = r0_tmp(motor, gearbox)
-        else 
-            r0 = r0_tmp;
-        end 
-        
-        beta0_tmp = obj.beta{1}; 
-        if isa(beta0_tmp, 'function_handle')
-            beta0 = beta0_tmp(motor, gearbox)
-        else 
-            beta0 = beta0_tmp;
-        end 
-        
-        Q_cost(Ip_start_idx:Ip_end_idx, Ip_start_idx:Ip_end_idx) = Q0;
-        Q_cost(In_start_idx:In_end_idx, In_start_idx:In_end_idx) = Q0; 
-        Q_cost(x_start_idx:x_end_idx, x_start_idx:x_end_idx)= M0; 
-
-        c_cost_init = zeros(dim_y, 1); 
-        c_cost_init(I_start_idx:I_end_idx) = c0; %---------------------------------------------
-		%c_cost_init(Ip_start_idx:Ip_end_idx) = c0;%+++++++++++++++++++++++++++++++++++++++++++
-		%c_cost_init(In_start_idx:In_end_idx) = -c0;%++++++++++++++++++++++++++++++++++++++++++
-        c_cost_init(x_start_idx:x_end_idx) = r0; 
-
-        c_rho_aug = zeros(dim_y, 1); 
-        c_rho_aug(Ip_start_idx:Ip_end_idx) = obj.settings.rho; 
-        c_rho_aug(In_start_idx:In_end_idx) = obj.settings.rho; 
-
-        c_cost = c_cost_init + c_rho_aug;
 
         if strcmpi(obj.settings.solver, 'gurobi')
+
             %% Gurobi Model 
+  		
+	        sense = [repmat('=', length(b_eq), 1); repmat('<', length(b_ineq), 1)]; 
+	        A_all = sparse([A_eq; A_ineq]); 
+	        b_all = [b_eq; b_ineq]; 
+
             model.A = A_all;
             model.Q = Q_cost; 
             model.rhs = b_all; 
@@ -1410,9 +931,8 @@ methods (Access = private)
             model.objcon = beta0; % constant objective term 
             model.lb = lb; 
             model.ub = ub; 
-            if num_quadcon > 0 
-                model.quadcon = quadcon;
-            end  
+
+            model.quadcon = quadcon;
             model.vtype = repmat('C', dim_y, 1); % all continuous variables 
             model.modelsense = 'min'; % minimize or maximize 
 
@@ -1426,338 +946,236 @@ methods (Access = private)
             params.cutoff = cutoff; 
             params.outputflag = 0;		% TODO 
 
-            params.FeasibilityTol = 1e-8; % Default 1e-6
-            params.OptimalityTol = 1e-9; % TODO % default 1e-6 
-            params.BarConvTol = 1e-9; % defaulat 1e-8 
-            params.BarQCPConvTol = 1e-9; % default 1e-6
+            %params.FeasibilityTol = 1e-8; % Default 1e-6
+            %params.OptimalityTol = 1e-9; % TODO % default 1e-6 
+            %params.BarConvTol = 1e-9; % defaulat 1e-8 
+            %params.BarQCPConvTol = 1e-9; % default 1e-6
 
             result = gurobi(model, params); 
-            if strcmp(result.status, 'OPTIMAL')
-                y_sol = result.x; 
-                % subtract off cost augmentation 
-                combo_cost = result.objval - c_rho_aug'*y_sol; 
-            else 
-                y_sol = nan(dim_y, 1); 
-                combo_cost = inf; 
+
+            % TODO -- clean up this switch so not as much code reused 
+			% GO THROUGH ALL STATUS CODES             
+            % TODO https://www.gurobi.com/documentation/9.0/refman/optimization_status_codes.html
+
+            switch result.status 
+
+	            case 'OPTIMAL'
+	            	y_sol = result.x; 
+	                % subtract off cost augmentation 
+	                combo_cost = result.objval - c_rho_aug'*y_sol; 
+	            case 'SUBOPTIMAL'
+	            	warning(['Solver returned suboptimal solution',...
+	            			 ' may need to loosen tolerances\n']);
+
+	            	y_sol = result.x; 
+	                % subtract off cost augmentation 
+	                combo_cost = result.objval - c_rho_aug'*y_sol; 
+	            case 'UNBOUNDED'
+
+	            	error(['Unbounded problem encountered',...
+	            				' Check that problem is well posed\n']);
+	            case 'INF_OR_UNBD'
+	            	y_sol = nan(dim_y, 1);
+	            	combo_cost = inf;
+	            	warning('Problem may be enbounded\n'); % WHY NOT PRINTIG? 
+	            otherwise  % CUTOFF / INF_OR_UNBD 
+	                y_sol = nan(dim_y, 1); 
+	                combo_cost = inf; 
             end 
         elseif strcmpi(obj.settings.solver, 'ecos') || ...
-        			      strcmpi(obj.settings.solver, 'sedumi')
+        			      	strcmpi(obj.settings.solver, 'sedumi')
 
 			[c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc] = prep_socp(Q_cost,...
 						c_cost, beta0, A_eq, b_eq, A_ineq, b_ineq, quadcon,...
 						 				 lb, ub,  cutoff);
-
 			if strcmpi(obj.settings.solver, 'ecos')
-
 				result = ecos_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc);
-
-				% ...maybe copy outside if for reuse? 
-	            if ~isinf(result.objval)
-	                y_sol = result.x; 
-	                combo_cost = result.objval - c_rho_aug'*y_sol; 
-	            else
-	                y_sol = nan(dim_y, 1); 
-	                combo_cost = inf;  
-	            end 
-
-			else % SEDUMI 
-
-				result = sedumi_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc);
-
-				% ...maybe copy outside if for reuse? 
-	            if ~isinf(result.objval)
-	                y_sol = result.x; 
-	                combo_cost = result.objval - c_rho_aug'*y_sol; 
-	            else
-	                y_sol = nan(dim_y, 1); 
-	                combo_cost = inf;  
-	            end 
-			
+			else
+				result = sedumi_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc);	
 			end 
+
+			% ...maybe copy outside if for reuse? 
+            if ~isinf(result.objval)
+                y_sol = result.x; 
+                combo_cost = result.objval - c_rho_aug'*y_sol; 
+            else
+                y_sol = nan(dim_y, 1); 
+                combo_cost = inf;  
+            end 
         else
             error('invalid solver'); % shouldnt be possible 
         end 
 
+
+
+        %
+        %	y_sol --- 
+        %	combo_cost 
+
+
+
+        %
+        %
+        %		Parse the solution 
+        %
+        %
+        %		If guccii ----- done 
+        % 
+        % 		If NOT guccii --- add extra constraints and check
+        %
+        %
+        %		If still NOT good -- call mixed integer solver
+        %			-- however, may want to save this problem for layer 
+        % 		-- ALSO definitely feed information back to caller 
+        %		in logging want to know how many problem required multiple solves
+        % 		and how many required mixed integer solvers
+        %
+
+        %
+
+
+
+
+
+
+        % TODO -- move solution parsing into another function
         %%
         %
-        %		 Parse solutons 
+        %		 			Parse solutons 
         %
         %
+
+        % TODO -- check for "suboptimality"
+
+
+
+        %
+        % return -- 
+        %
+        % sol struct, bad_idxs, checks? 
+
+        % split - "compenstatoin torques" out of "matrices"
+
+
 
         if isinf(combo_cost)
         	% Return nans 
         	sol = struct(); % empty 
         else 
-        	% TODO 
-			Ip = y_sol(Ip_start_idx:Ip_end_idx);    % pos current 
-	        In = y_sol(In_start_idx:In_end_idx);	% neg current 
+        	k_t = motor.k_t; 
+        	alph = gearbox.alpha; 
+        	eta = gearbox.eta; 
+        	I_comp = matrices.I_comp; 
 
-			%sol.I = y_sol(I_start_idx:I_end_idx);
-			sol.I = Ip - In; 
-
-			I_check = y_sol(I_start_idx:I_end_idx);
-
+			sol.I = y_sol(index_map.I); 
+        	sol.x = y_sol(index_map.x); 
 
 
-        	sol.x = y_sol(x_start_idx:x_end_idx); 
+	        sol.I_comp = I_comp; 
 
-	        sol.tau = T*sol.x + d; 	% Total torque output 
+        	I_shift = sol.I - I_comp; 
+        	 
+        	zero_vel = [sign(obj.omega) == 0];
+	        static_motor_friction = zeros(obj.n, 1); 
+	        static_motor_friction(obj.zero_vel_idxs) = y_sol(index_map.zv_idxs);
+
+			tau_motor_friction = matrices.tau_motor_friction;
+			tau_motor_inertia = matrices.tau_motor_inertia;
+			tau_gearbox_inertia = matrices.tau_gearbox_inertia;
+
+			tfs = matrices.tau_friction_static;
+
+	        % sol.tau -- torque felt at the joint (afte accounting for torque to acell gearbox )
+        	if eta < 1
+        		sol.I_gm = y_sol(index_map.gm);
+	        	sol.I_mu = y_sol(index_map.mu);
+        		sol.tau = alph*k_t*eta*(sol.I_gm) + (alph*k_t/eta)*(sol.I_mu)...
+        				 + alph*static_motor_friction - tau_gearbox_inertia;
+        	else 
+				sol.tau = alph*k_t*(I_shift) ...
+						+ alph*static_motor_friction - tau_gearbox_inertia;
+        	end 
+
+	        Isq = y_sol(index_map.Isq);
+
 
 	        % calculate compensation torque 
 	        % TODO -- make sure to account for zero vel frictoi cone in outputs 
-	        driving = [sol.tau .* sign_omega > 0];
-	        driven =  [sol.tau .* sign_omega < 0];
-	        zero_vel = [sign_omega == 0];
-	        static_motor_friction = zeros(n, 1); 
-	        static_motor_friction(zero_vel_idxs) = y_sol(zv_start_idx:zv_end_idx);
+	        
+	        	        		% For debug 
+	        tau_comp = sol.tau + tau_gearbox_inertia;  % DOUBLE CHECK 
+	       
+	        % in this context, strictly greater 
+	        driving = [tau_comp .* sign(obj.omega) > 0];  % note OR equals 
+	        driven =  [tau_comp .* sign(obj.omega) < 0];
 
+	        
+	        % TODO -- rename zero vel things to make it more clear its torque 
+	        % ADD THESE
 	        sol.tau_friction = -alph*(tau_motor_friction.*(eta*driving + ...
 	        					driven/eta) -  static_motor_friction);
 	        sol.tau_inertia = -alph*tau_motor_inertia.*(eta*driving + ...
 	        				driven/eta + zero_vel) - tau_gearbox_inertia;
-
 	        tau_m = k_t * sol.I; % from current 
 
+	        % Just electromechanical 
 	        sol.tau_em = alph*(tau_m.*(eta*driving + driven/eta + zero_vel)); 
 
-
-	        % TODO -- friction compensatoin torque 
-	        % TODO -- inertial compensation torque
 
 	        % Everything should line 
 
 	        % Add debug to settings 
 	        
 	        % TODO -- Fill in more debug 
-	        if obj.settings.debug % add more things to output 
-
-	        	Ip = y_sol(Ip_start_idx:Ip_end_idx);    % pos current 
-	        	In = y_sol(In_start_idx:In_end_idx);	% neg current 
-	        	I = Ip - In;
-
+	        if obj.settings.debug % add more things to output 	        
 	        	% Making sure everything adds up 
 	        	tau_check = sol.tau - (sol.tau_friction + sol.tau_inertia);
+	        	tau_error = tau_check - sol.tau_em; 
+	        	[max_tau_error, mte_idx] = max(abs(tau_error));
 
-	        	%assert(max(abs(tau_check - sol.tau_em)) < 1e-6,...
-	        	%					 'Torques do not add up');
-
-
-
-
-
-	        	% The real questoin is how much does this model 
-	        	% of inertial compensatoin matter??????????
-	        	% vs lumped inertial compensatoin past motor
-
-	        	% Check Validity of Proof 
-
-	        	% Ip OR  In always negative 
-	        	%IpIn = Ip.*In; 
-	        	[max_current_error, mce_idx] = max(min(Ip, In)); 
-
-	        	% Maximum Error From Convex Reformulation 
-	        	max_objective_error = obj.settings.rho*sum(Ip + In);% in objective value
-
+	        	if max_tau_error > 1e-3
+	        		% NOTE: if this get embeded may wanto return something on these conditoins 
+	        		display(max_tau_error); 
+	        		disp('Torque matchup error')
+	        	end 
 
 	        	if eta < 1
-	        		sol.I_gm = y_sol(gm_start_idx:gm_end_idx);
-	        		sol.I_mu = y_sol(mu_start_idx:mu_end_idx);
 
+	        		s = y_sol(index_map.s);
+
+	        		% TO help debug
+	        		I = sol.I;
 	        		gm = sol.I_gm;
 	        		mu = sol.I_mu;
 
-	        		gm_lb = lb(gm_start_idx:gm_end_idx);
-					gm_ub = ub(gm_start_idx:gm_end_idx);
-
-					mu_lb = lb(mu_start_idx:mu_end_idx);
-					mu_ub = ub(mu_start_idx:mu_end_idx);
+	        		% Maximum Error From Convex Reformulation 
+	        		so = round(sign(obj.omega) + 0.1); 
+	        	    max_objective_error = obj.settings.rho*sum(so.*(gm - mu));% in objective value
+	        		gm_lb = lb(index_map.gm); 	gm_ub = ub(index_map.gm);
+					mu_lb = lb(index_map.mu); 	mu_ub = ub(index_map.mu);
 		
-
-	        		gm_diff = sol.I_gm - I_comp;
-	        		mu_diff = sol.I_mu - I_comp;
-
-	        		[max_gm_mu_error, mgme_idx] = max(min(abs(gm_diff), abs(mu_diff)));
-
-	       %{ 
-        % Index Map for Optimization 
-        I_start_idx = 1;
-        I_end_idx = n; 
-
-        % For code reuse, keep +/- decomp even if eta == 1
-        Ip_start_idx = n + 1; 
-        Ip_end_idx = 2*n; 
-
-        In_start_idx = 2*n + 1;
-        In_end_idx = 3*n; 
-        %} 
-
-	        		%if max_gm_mu_error > 1e-2
-	        		if (eta < 1) && (min(I_comp) < 0 )
-
-	        			I_l = -I_u; 
-
-						rho = obj.settings.rho;
-	        			
-
-		        		cvx_begin quiet 
-		        			variable tau_out(n, 1); 
-		        			variable gm_cvx(n, 1);
-		        			variable mu_cvx(n, 1);
-		        			variable I_abs(n, 1);
-		        			variable I_cvx(n, 1);
-		        			variable x_cvx(w, 1);
-		        			variable y_cvx(dim_y, 1);
-		        			%binary variable delta(n, 1);
-		        			variable delta(n, 1);
-		        			variable bet(n, 1); 
-		        			%variable sig(n, 1); 
-		        			%variable phi(n, 1); 
-		        			variable z(n, 1); 
-		        			variable theta(n, 1); 
-
-		        			minimize rho*(sum(gm_cvx) - sum(mu_cvx)) + (diag(Q0)'*z) + (c0'*I_cvx) + beta0 + quad_form(x_cvx, M0) + (r0'*x_cvx);
-
-		        			subject to 
-		        				abs(I_cvx) <= I_abs;
-		        				T*x_cvx + d_comp == tau_out; 
-		        				tau_out == alph*k_t*(eta*gm_cvx + (1/eta)*mu_cvx);
-		        				gm_cvx >= 0; 
-		        				mu_cvx <= 0; 
-		        				gm_cvx + mu_cvx == I_cvx - I_comp; 
-
-
-		        				% SIGMA AND PHI DO NOTHING HERE 
-		        				% 
-
-
-		        				%tau_out == alph*eta*k_t*sig + (alph*k_t/eta)*phi; 
-		        				%sig + phi == I - I_comp; 
-
-		        				0 <= delta;
-		        				delta <= 1; 
-		        				bet + delta == 1; 
-
-		        				% FUN = I_comp - I, Fun Min = I_comp - I_u
-		        				% FIN mAx = I_com - I_l
-
-		        				epss = 1e-13; 
-
-		        				I_comp - I_cvx <= (I_comp - I_l).*(1 - delta);
-		        				I_comp - I_cvx >= epss + delta.*(I_comp - I_u - epss);
-		        				
-
-		        				gm_cvx + epss + (I_l - epss).*delta <= 0; 
-		        				mu_cvx + epss + (I_l - epss).*bet <= 0;   % REDUNDANT? 
-
-		        				%sig <= I_u .* delta;
-		        				%sig >= 0; 
-		        				%sig >= gm_cvx - I_u.*(1 - delta); 
-
-		        				%phi <= 0;
-		        				%phi >= I_l .* bet; 
-		        				%phi <= mu_cvx - I_l.*(1 - bet); 
-		        				%phi >= mu_cvx - 0;
-
-		        				z >= 0; 
-		        				theta >= 0;
-
-		        				theta + 2*I_cvx.*I_comp - I_comp.^2 <= z; 
-		        				
-		        				(gm_cvx - mu_cvx).^2 <= theta;
-
-
-		        				% cvx somehow saying infeasible 
-		        				% when setup as integer program 
-
-		        				% perhaps how its hadling booleans? 
-
-		        				I_abs.^2 <= z; 
-
-		        				if ~isempty(H)
-		        					H*x_cvx + b == 0; 
-		        				end 
-
-		        				if ~isempty(H_ineq)
-		        					H_ineq*x_cvx + b_ineq_H <= 0 ;
-		        				end 
-
-		        				I_abs <= I_u; % should limit 
-
-		        				y_cvx(1:n) == I_cvx;
-		        				y_cvx(n+1:2*n) == I_abs; % for quad costs   
-		        				y_cvx(end - w + 1:end) == x_cvx; 
-
-		        				% Quadrati constrsaints 
-		        				for j = 1:numel(quadcon)
-		        					Qc_tmp = quadcon(j).Qc;
-		        					q_tmp = quadcon(j).q; 
-		        					beta_tmp = -quadcon(j).rhs;
-
-
-		        					% Split into components 
-		        					Qj = Qc_tmp(n+1:2*n, n+1:2*n); % quad cost part 
-		        					cj = q_tmp(1:n);
-
-		        					Mj = Qc_tmp(end - w + 1:end, end - w + 1:end); 
-		        					rj = q_tmp(end - w + 1:end);
-
-		        					qd = diag(Qj);
-							        (qd'*z) + (cj'*I_cvx) + quad_form(x_cvx, Mj) + (rj'*x_cvx) - beta_tmp <= 0 ;
-							    end 
-
-
-							    for j = 1:n
-							    	if I_comp(j) >= 0 
-							    		gm_cvx(j) - mu_cvx(j) <= I_abs(j) + I_comp(j);
-							    	else
-							    		% same as before, not helpful							    	
-							    		gm_cvx(j) - mu_cvx(j) <= I_abs(j) - I_comp(j);
-							    	end 
-
-
-									quad_over_lin(gm_cvx(j), delta(j)) + quad_over_lin(-mu_cvx(j), bet(j)) <= theta(j);
-		        				
-
-
-
-							    end 
-						  
-						cvx_end 
-
-						display(result)
-						display(cvx_optval)
-
-		        		[max_gm_mu_cvx, mgme_cvx_idx] = max(min(abs(gm_cvx - (I_cvx - I_comp)),...
-		        							 abs(mu_cvx - (I_cvx - I_comp))));
+					I_shift = sol.I - I_comp; 
+					[max_gm_mu_error, mgme_idx] = max(min(abs(gm - I_shift),... 
+		        							 				abs(mu - I_shift)));
 		        		
+					if max_gm_mu_error > 1e-3 && (max_tau_error >= 1e-3)
 
+						if isfield(index_map, 'del') % if binary aug 
 
-		        		display(max_gm_mu_cvx);
+							del = y_sol(index_map.del);
+							sig = y_sol(index_map.sig);
 
+							gmsq = y_sol(index_map.gmsq);
+	        				musq = y_sol(index_map.musq);
+	        				keyboard
+						else 
+							del = zeros(n, 1);
+							sig = zeros(n, 1);
 
-		        		if max_gm_mu_cvx > 5e-2
-		        			disp('.......awww fuckkkkkkkkkkkkkkkkk');
-		        			keyboard
-		        		else 
-		        			disp('we gucciiiiiiiiii?')
-		        		end 
-
-
-
-		        		min_I = min(I_cvx);
-		        		display(min_I); 
-
-
-		        		% HONESTLY WHAT REALLY MATTERS IS TORQUE ERROR 
-
-
-		        	end 
-						        		% Process results from CVX 
-
-
-
-
-	        		if max_gm_mu_error > 1e-2
+							disp('rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
+							keyboard
+							%error('SHOULDNT BE POSSIBLE')
+						end 
 
 	        			disp('....')
 	        			disp('max gm mu error')
@@ -1765,76 +1183,36 @@ methods (Access = private)
 
 	        			vel_at_error = omega(mgme_idx);
 	        			comp_current_at_error = I_comp(mgme_idx);
-	        			display(mgme_idx)
 
-
-	        			I_comp_bad = I_comp(mgme_idx);
 	        			gm_bad = gm(mgme_idx);
 	        			mu_bad = mu(mgme_idx);
+	   
+	        			I_bad = sol.I(mgme_idx);
+	        			Isq_bad = Isq(mgme_idx);
+	        			s_bad = s(mgme_idx);
 
-	        			Ip_bad = Ip(mgme_idx);
-	        			In_bad = In(mgme_idx);
-	        			I_bad = I(mgme_idx);
-
-
-
-	        			display(max_current_error);
-	        			display(max_gm_mu_error);
-	        		    display(vel_at_error);
-	        			display(comp_current_at_error);
-	        			keyboard
+	        			del_bad = del(mgme_idx);
+	        			display(del_bad);
+	        			%display(mgme_idx)
+	        			%display(max_gm_mu_error);
+	        		    %display(vel_at_error);
+	        			%display(comp_current_at_error);
+	        			%keyboard
 
 	        		end 
 
-	        	end 
-
-	        	if max_current_error > 1e-2		% 10 mA 
-	        		disp('max current error')
-
-	        		vel_at_error = omega(mce_idx);
-	        		comp_current_at_error = I_comp(mce_idx);
-
-
-	        		I_bad = I(mce_idx);
-	        		Ip_bad = Ip(mce_idx);
-	        		In_bad = In(mce_idx); 
-
-	        		display(max_current_error);
-	        		display(max_gm_mu_error);
-	        		display(vel_at_error);
-	        		display(comp_current_at_error);
-	        		keyboard;
-	        	end 
-
-
-	        	%if max(abs(tau_check - sol.tau_em)) > 5e-4
-	        	if max(abs(tau_check - sol.tau_em)) > 1e-2
-
-	        		tmp = abs(tau_check - sol.tau_em);
-	        		max_tau_error = max(tmp);
-	        		display(max_tau_error); 
-
-	        		disp('Torque matchup error')
-	        		keyboard
-	        	end 
+	        		if max_tau_error > 1e-3
+		        		disp('Torque matchup error........')   		
+	        		end 
+	        	end
 
 
 
 
-	        	% PRINTS 
-
-	        end 
-
-
-
+	        end  % end if debug 
         end 
 
-        
-
-
         solve_time = toc(start_tic);
-
-
 
     end 
 
@@ -2059,6 +1437,598 @@ methods (Access = private)
 
 
 
+    function [matrices, cutoff, index_map]  = build_matrices(obj, motor, gearbox, bound)
+    %
+    %
+    %		Builds the matrices for the problems 
+    %
+    %
+    %
+     % rename cutoff to "bound" and then check problem type 
+        if strcmp(obj.problem_type, 'standard')
+            cutoff = bound; 
+        elseif strcmp(obj.problem_type, 'fractional')
+            cutoff = inf; 
+            assert(~isinf(bound), 'Bound must be finite for fractional problems');
+        else 
+            error('Invalid problem type');
+        end 
+
+
+        % Big block comment otlinin whats going on here 
+
+        %
+        %
+        %
+        %
+        %		 A review of the math would be great  
+        %
+        %
+        %
+        %
+        %
+
+        % How we actually "solve" will depend on solver
+        % Gurobi OR Sedumi OR ECOS 
+        % 
+        % SOCP implicit for Gurobi solve (looks like a stanrd QCQP)
+        omega = obj.omega; 
+        omega_dot = obj.omega_dot; % may be all zeros 
+
+        eta = gearbox.eta; 
+        alph = gearbox.alpha; 
+        k_t = motor.k_t; 
+
+        H = obj.H(motor, gearbox);
+        b = obj.b(motor, gearbox);
+        H_ineq = obj.H_ineq(motor, gearbox);
+        b_ineq = obj.b_ineq(motor, gearbox);
+
+
+        T = obj.T(motor, gearbox);
+        tau_gearbox_inertia = gearbox.inertia * (alph^2) * omega_dot; 
+        d = obj.d(motor, gearbox); 
+        d_comp = d + tau_gearbox_inertia; % NOTE: gb addition
+        
+        I_u = obj.I_u(motor, gearbox);  % symmetric bounds, dont need I_l
+        I_l = -I_u; 
+
+        % dimensions 
+        n = obj.n; 
+        w = obj.w;
+        p = obj.p;
+        m = obj.m; 
+
+        zero_vel_idxs = obj.zero_vel_idxs; 
+        nzvi = length(zero_vel_idxs); 
+
+        % NOTE the distinction at omega = 0 (also, could precomp)
+        sign_omega = sign(omega); 		% = 0 if omega = 0 
+        so = round(sign_omega + 0.1); 	% = 1 if omega = 0  
+
+        %
+        % 		Friction and Inertia 
+        %
+
+        % TODO -- whats the best general way to handle static friction
+        % Should there be a call to a function which determines 
+        % friction model based of settings? 
+        tau_friction_static = 1.1 * k_t * motor.I_nl;  % scalar 
+        % tau_motor_friction is JUST kinetic 
+        tau_motor_friction = k_t * motor.I_nl * sign_omega; % NOTE: Incorp other friction models 
+      
+        % Since BEFORE gearbox only multiplied by alpha NOT alpha^2 
+        % will effectively get multiplied by alpha again through gearbox
+        tau_motor_inertia = motor.inertia * alph * omega_dot; 
+        
+  		% Dynamic Motor Friction and Inertia Compensation  (f - fric, j- inerits )
+        tau_mfj = tau_motor_friction + tau_motor_inertia; 
+        I_comp = tau_mfj/k_t; % corresponding current 
+
+        % FOR SOME DEBUG 
+
+        % Index Map for Optimization 
+        I_idxs = 1:n;
+        Isq_idxs = I_idxs(end) + (1:n);	 % equivalent to I squared 
+        x_idxs = Isq_idxs(end) + (1:w); 
+        index_map.I = I_idxs; 
+        index_map.Isq = Isq_idxs; 
+        index_map.x = x_idxs;
+
+
+        Ico = I_comp.*omega;        
+        binary_aug = false; 
+        if eta < 1
+        	gm_idxs = x_idxs(end) + (1:n);
+            mu_idxs = gm_idxs(end) + (1:n); 
+            s_idxs = mu_idxs(end) + (1:n);  
+
+        	index_map.gm = gm_idxs;
+            index_map.mu = mu_idxs; 
+            index_map.s = s_idxs; 
+
+        	if min(Ico) >= 0
+            	dim_y = s_idxs(end) + nzvi;  % total dimension of opt vector 
+        		lb = -inf(dim_y, 1);		
+        		ub = inf(dim_y, 1); 
+        	else 
+        		% TODO -- ONLY ADD WHERE NEEDED TO REDUCE PROBLEM
+        		% SIZE AND REDUNDANT CONSTRAINTS 
+        		binary_aug = true; 	% Add more variables 
+
+        		del_idxs = s_idxs(end) + (1:n); 
+            	sig_idxs = del_idxs(end) + (1:n); 
+            	
+            	gmsq_idxs = sig_idxs(end) + (1:n);
+            	musq_idxs = gmsq_idxs(end) + (1:n);
+
+            	index_map.del = del_idxs;
+            	index_map.sig = sig_idxs;
+            	index_map.gmsq = gmsq_idxs;
+            	index_map.musq = musq_idxs; 
+
+            	dim_y = musq_idxs(end) + nzvi;  % total dimension of opt vector 
+
+            	% Bounds on optimizatoin vatiable 
+        		lb = -inf(dim_y, 1);		
+        		ub = inf(dim_y, 1); 
+
+            	lb(gmsq_idxs) = 0;  
+            	ub(gmsq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+            	lb(musq_idxs) = 0;
+            	ub(musq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+
+				lb(del_idxs) = 0; 	ub(del_idxs) = 1; 
+				lb(sig_idxs) = 0; 	ub(sig_idxs) = 1; 
+       	
+        	end 
+
+        	% Bounds on gm, mu, s 
+			lb(gm_idxs) = min(-sign_omega .* (I_l - I_comp), 0);
+			ub(gm_idxs) = max(sign_omega .* (I_u - I_comp), 0);
+
+			lb(mu_idxs) = min(so .* (I_l - I_comp), 0);
+			ub(mu_idxs) = max(-so .* (I_u - I_comp), 0);
+
+			lb(s_idxs) = 0; 
+			ub(s_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+
+			%
+			%		 Tx + d_comp = motor/gearbox torque 
+			%
+            A_eq_tau_x = zeros(n, dim_y);    % sparse? 
+            A_eq_tau_x(:, x_idxs) = -T; 
+            A_eq_tau_x(:, gm_idxs) = alph*eta*k_t*eye(n);
+            A_eq_tau_x(:, mu_idxs) = (alph*k_t/eta)*eye(n);
+            b_eq_tau_x = d_comp; % d + gearbox inertia compensation
+
+           
+            %		
+            % 			gamma + mu = I - I_comp
+            %
+            %
+            A_eq_gm_mu = zeros(n, dim_y);  
+            A_eq_gm_mu(:, gm_idxs) = eye(n);
+            A_eq_gm_mu(:, mu_idxs) = eye(n);
+            A_eq_gm_mu(:, I_idxs) = -eye(n); 
+            b_eq_gm_mu = -I_comp; 
+
+
+			%
+			%		s + 2I*I_comp - I_comp^2 = Isq
+			%
+			A_eq_cost = zeros(n, dim_y); % might renmae 
+			A_eq_cost(:, s_idxs) = eye(n);
+			A_eq_cost(:, I_idxs) = 2*diag(I_comp);
+			A_eq_cost(:, Isq_idxs) = -eye(n);
+			b_eq_cost = I_comp.^2; 
+
+      
+      		A_eq_other = [A_eq_gm_mu; A_eq_cost];
+            b_eq_other = [b_eq_gm_mu; b_eq_cost];
+
+            A_ineq_other = []; 
+            b_ineq_other = []; 
+
+            %
+            %		Extra Linear Constraints 
+            %
+            if binary_aug % && false 
+				% For assignment of delta with driving/driven 
+				epss = 1e-9; % tolerancing 
+				A_del = zeros(2*n, dim_y);
+
+				%
+				%    Relate Delto to Driving/Driven 
+				%		[Delta = 1] <===> [Driving]
+				%	
+				% 	When all else fails, we will force Delta 
+				%   to take on binary values and call a mixed integer
+				%	solver to handle this 
+
+				A_del(1:n, I_idxs) = -diag(so);
+				A_del(1:n, del_idxs) = diag(so.*I_comp + I_u);
+
+				A_del(n + (1:n), I_idxs) = diag(so);
+				A_del(n + (1:n), del_idxs) = diag(so.*I_comp - I_u - epss);
+				b_del = [I_u; so.*I_comp - epss];
+
+
+				% gm \equiv to delta*(I - I_comp)
+				tmp_max = I_u - I_comp;
+				tmp_min = I_l - I_comp;
+			
+				A_del_gm = zeros(3*n, dim_y);
+
+				A_del_gm(1:n, gm_idxs) = eye(n);
+				A_del_gm(1:n, del_idxs) = -diag(tmp_max);
+
+				
+				A_del_gm(n + (1:n), gm_idxs) = -eye(n);
+				A_del_gm(n + (1:n), del_idxs) = diag(tmp_min);
+
+			
+				A_del_gm(2*n + (1:n), gm_idxs) = eye(n);
+				A_del_gm(2*n + (1:n), del_idxs) = diag(tmp_min);
+				A_del_gm(2*n + (1:n), I_idxs) = -eye(n);
+			
+				A_del_gm(3*n + (1:n), gm_idxs) = -eye(n);
+				A_del_gm(3*n + (1:n), del_idxs) = diag(tmp_max);
+				A_del_gm(3*n + (1:n), I_idxs) = eye(n);
+				b_del_gm = [zeros(2*n, 1); -I_comp - tmp_min; I_comp + tmp_max];
+							
+				A_ineq_other = [A_ineq_other; A_del; A_del_gm];
+				b_ineq_other = [b_ineq_other; b_del; b_del_gm];
+
+				%
+				%		 gm_sq + mu_sq = s 
+				%
+				A_gmmu_sq = zeros(n, dim_y);
+				A_gmmu_sq(:, gmsq_idxs) = eye(n);
+				A_gmmu_sq(:, musq_idxs) = eye(n);
+				A_gmmu_sq(:, s_idxs) = -eye(n);
+				b_gmmu_sq = zeros(n, 1);
+	
+				%
+				%		 delta + sigma = 1 
+				%
+				A_del_sig = zeros(n, dim_y);
+				A_del_sig(:, del_idxs) = eye(n);
+				A_del_sig(:, sig_idxs) = eye(n);
+				b_del_sig = ones(n, 1);
+
+				A_eq_other = [A_eq_other; A_del_sig; A_gmmu_sq];
+				b_eq_other = [b_eq_other; b_del_sig; b_gmmu_sq];
+			end 
+        else  % NO GEARBOX 
+        	% Just I, Isq, x, zv
+            dim_y = 2*n + w + nzvi; 
+            lb = -inf(dim_y, 1);		
+        	ub = inf(dim_y, 1);
+
+            A_eq_tau_x = zeros(n, dim_y);    % sparse? 
+            A_eq_tau_x(:, x_idxs) = -T; 
+            A_eq_tau_x(:, I_idxs) = alph*k_t*eye(n);
+            b_eq_tau_x = d_comp + alph*k_t*I_comp; 
+
+            A_eq_other = [];	% no others 
+            b_eq_other = []; 
+            A_ineq_other = [];	% no others 
+            b_ineq_other = []; 
+        end 
+
+        % Fill in variable bounds on I, Isq
+        lb(I_idxs) = I_l; 
+        ub(I_idxs) = I_u; 
+
+        lb(Isq_idxs) = 0;    % non-negativity 
+        ub(Isq_idxs) = I_u.^2; 
+
+        %
+        %
+        %		Account for Static Friction Cone
+        %		for points with zero velocity
+        %
+        %		Adjust A_eq_tau_x and b_eq_tau_x accordingly
+        %
+
+ 		% Zero Vel - Use Static Friction 
+ 		zv_idxs = x_idxs(end) + (1:nzvi);  % indices in opt vec NOT omega 
+        index_map.zv_idxs = zv_idxs;
+        if nzvi > 0 
+        	% TODO -- probably consider gb fully efficient at zero vel?
+        	% think through a little more (but then just alpha on next line)
+            A_eq_tau_x(zero_vel_idxs, zv_idxs) = alph;
+
+            % Overwrite the other zero vel points, treat gb as fully eff 
+            if eta < 1
+            	% Replace alpha*kt*eta with alph*kt*eta on those rows 
+            	A_eq_tau_x(zero_vel_idxs, gm_idxs(1) + zero_vel_idxs - 1) = alph*k_t;
+            	A_eq_tau_x(zero_vel_idxs, mu_idxs) = 0;
+            	b_eq_tau_x(zero_vel_idxs) = d_comp(zero_vel_idxs); 
+            end 
+
+            % Friction Cone 
+            A_ineq_zv = zeros(2*nzvi, dim_y);
+            A_ineq_zv(1:nzvi, zv_idxs) = 1; 
+            A_ineq_zv(nzvi + (1:nzvi), zv_idxs) = -1; 
+            b_ineq_zv = tau_friction_static * ones(2*nzvi, 1);
+
+            % Stack em up
+            A_ineq_other = [A_ineq_other; A_ineq_zv];
+            b_ineq_other = [b_ineq_other; b_ineq_zv];
+        end 
+
+        if ~isempty(H)
+            A_eq_H = zeros(size(H, 1), dim_y);
+            A_eq_H(:, x_idxs) = -H;   % note signs
+            b_eq_H = b; 
+        else 
+            A_eq_H = [];
+            b_eq_H = [];
+        end
+
+        A_eq = [A_eq_tau_x; A_eq_other; A_eq_H]; 
+        b_eq = [b_eq_tau_x; b_eq_other; b_eq_H]; % NOTE signs 
+
+        % there is some processing to do here for if 
+        % general constraints are SOCP OR QCP or simple inequality 
+        % Dont want to need to redo analyis 
+
+        % COULD define a seperate general inequality 
+        % for when all quadratic terms are empty
+        % fill this up in preprocessing and then this step
+        % becomes easier 
+        num_lin_ineq = nnz(obj.lin_ineq);
+        if num_lin_ineq > 0 
+            A_ineq_extra = zeros(num_lin_ineq, dim_y);
+            b_ineq_extra = zeros(num_lin_ineq, 1); 
+            idxs = find(obj.lin_ineq); 
+        else 
+            A_ineq_extra = []; 
+            b_ineq_extra = [];
+        end 
+
+        
+        quadcon = struct([]); % struct for quadratic/SOC constraints 
+      	
+      	%
+      	%		Incorporate Ineqaulity Constraints 
+        %		Specified with Q, r, M, c, beta 
+        %
+        %qc_idx = 0;   % n
+        qc_idx = numel(quadcon);
+
+        lin_ineq_idx = 0; % will increment 
+        for j = 1:m    % incorporate the quadratic constraints + other linear ineqs 
+            cj = obj.c{j + 1};  % +1 bc 1 indexing 
+            if isa(cj, 'function_handle')
+                c_tmp = cj(motor, gearbox); 
+            else 
+                c_tmp = cj;
+            end 
+
+            rj = obj.r{j + 1};   % WHY SO SLOW ? - NOT EMPTY             
+            if isa(rj, 'function_handle')
+                r_tmp = rj(motor, gearbox); % slow 
+            else 
+                r_tmp = rj; 
+            end 
+            
+            bet = obj.beta{j + 1}; 
+            if isa(bet, 'function_handle')
+                beta_tmp = bet(motor, gearbox); % slow 
+            else 
+                beta_tmp = bet; 
+            end 
+
+            q_tmp = zeros(dim_y, 1); 
+            q_tmp(I_idxs) = c_tmp; 
+            q_tmp(Isq_idxs) = obj.Q{j + 1}(motor, gearbox); 
+            q_tmp(x_idxs) = r_tmp; 
+
+            if obj.lin_ineq(j)  % if linear 
+                lin_ineq_idx = lin_ineq_idx + 1; 
+                A_ineq_extra(lin_ineq_idx, :) = q_tmp'; 
+                b_ineq_extra(lin_ineq_idx) = -beta_tmp;
+            else  % quad constraints 
+                qc_idx = qc_idx + 1; 
+
+                Mj_tmp = obj.M{j + 1}(motor, gearbox); 
+
+                num_vals = nnz(Mj_tmp); 
+                
+                % NOTE -- could speed these up 
+                Qc_tmp = sparse([], [], [], dim_y, dim_y, num_vals); % NOTE: initializing as sparse will help speed 
+                Qc_tmp(x_idxs, x_idxs) = Mj_tmp; 
+
+                quadcon(qc_idx).Qc = Qc_tmp; 
+                quadcon(qc_idx).q = q_tmp; 
+                quadcon(qc_idx).sense = '<'; 
+                quadcon(qc_idx).rhs = -beta_tmp; 
+            end 
+
+        end 
+
+       
+        % TODO -- initial correct size of quadon 
+        % TODO -- move this up and group all the if eta < 1 code 
+	    qc_idx = numel(quadcon);
+        if eta < 1 
+        	%
+        	% 			Add Quadratic Constraits 
+        	%				(gamma - mu)^2 <= s
+
+	        for i = 1:n 
+		        qc_idx = qc_idx + 1; 
+
+		        row = [gm_idxs(i); gm_idxs(i); mu_idxs(i); mu_idxs(i)];
+		        col = [gm_idxs(i); mu_idxs(i); gm_idxs(i); mu_idxs(i)];
+		        vals = [1; -1; -1; 1]; 
+
+		        % gm^2 - 2 gm*mu + mu_^2 
+	            Qc_tmp = sparse(row, col, vals, dim_y, dim_y); 
+
+
+		        q_tmp = zeros(dim_y, 1);
+		        q_tmp(s_idxs(i)) = -1; 
+
+		        quadcon(qc_idx).Qc = Qc_tmp; 
+	            quadcon(qc_idx).q = q_tmp; 
+	            quadcon(qc_idx).sense = '<'; 
+	            quadcon(qc_idx).rhs = 0; 
+	        end 
+
+	        %... its possible dont need both of these 
+	        %
+	        %      Rotated SOC Constraints 
+	        %		gm^2 <= s.*delta
+	        %		mu^2 <= s.*(beta) -- need to define beta 
+
+	        if binary_aug 
+	        	for i = 1:n 
+	        		% gm^2 <= gm_sq .*delta 
+			    	qc_idx = qc_idx + 1; 
+			        row = [gm_idxs(i); gmsq_idxs(i); del_idxs(i)];
+			        col = [gm_idxs(i); del_idxs(i); gmsq_idxs(i)];
+			        vals = [1; -0.5; -0.5]; 
+			        Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
+			        quadcon(qc_idx).Qc = Qc_tmp; 
+		            quadcon(qc_idx).q = zeros(dim_y, 1);
+		            quadcon(qc_idx).sense = '<'; 
+		            quadcon(qc_idx).rhs = 0; 
+
+		            % mu^2 <= mu_sq .*sigma 
+			    	qc_idx = qc_idx + 1; 
+			        row = [mu_idxs(i); musq_idxs(i); sig_idxs(i)];
+			        col = [mu_idxs(i); sig_idxs(i); musq_idxs(i)];
+			        vals = [1; -0.5; -0.5]; 
+			        Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
+			        quadcon(qc_idx).Qc = Qc_tmp; 
+		            quadcon(qc_idx).q = zeros(dim_y, 1);
+		            quadcon(qc_idx).sense = '<'; 
+		            quadcon(qc_idx).rhs = 0; 
+		        end 
+	        end 
+	    else 
+	    	%
+	    	%	Add quadratic constraint I^2 <= I_sq 
+	    	%	
+	    	for i = 1:n 
+		        qc_idx = qc_idx + 1; 
+
+	            Qc_tmp = sparse(I_idxs(i), I_idxs(i), 1, dim_y, dim_y); 
+		        q_tmp = zeros(dim_y, 1);
+		        q_tmp(Isq_idxs(i)) = -1; 
+
+		        quadcon(qc_idx).Qc = Qc_tmp; 
+	            quadcon(qc_idx).q = q_tmp; 
+	            quadcon(qc_idx).sense = '<'; 
+	            quadcon(qc_idx).rhs = 0; 
+	        end 
+	    end 
+
+
+        if strcmp(obj.problem_type, 'fractional')
+            % Augment H with equality 
+            A_lin_frac = zeros(2, dim_y); 
+            A_lin_frac(1, x_idxs) = obj.r_num - bound*obj.r_den;
+            
+            % Constrain denominator to be positive  
+            A_lin_frac(2, x_idxs) = -obj.r_den; % nonnegativitiy 
+            b_lin_frac = [bound*obj.beta_den - obj.beta_num; obj.beta_den];
+        
+        elseif strcmp(obj.problem_type, 'standard')
+            A_lin_frac = []; 
+            b_lin_frac = []; 
+        else 
+            error('Invalid Problem type ');
+        end 
+
+        % Add the linear inequalities in H_ineq, b_ineq
+        if ~isempty(H_ineq)
+        	% Add these to A_ineq other 
+        	A_ineq_H = sparse([], [], [], size(H_ineq, 1), dim_y, nnz(H_ineq));
+        	A_ineq_H(:, x_idxs) = H_ineq; 
+        	b_ineq_H = b_ineq; 
+
+        	A_ineq_extra = [A_ineq_extra; A_ineq_H];
+        	b_ineq_extra = [b_ineq_extra;  -b_ineq_H]; % NOTE signs 
+        end  
+
+        % TODO -- naming -- dont over b_ineq name 
+        A_ineq = [A_ineq_other; A_ineq_extra; A_lin_frac];
+        b_ineq = [b_ineq_other; b_ineq_extra; b_lin_frac];
+
+        %% ----- Incorporate Actual Cost --------------
+        [M0_row, M0_col, M0_val] = find(obj.M{1}(motor, gearbox)); 
+        Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
+        									 M0_val, dim_y, dim_y); 
+
+        r0_tmp = obj.r{1};
+        if isa(r0_tmp, 'function_handle')
+            r0 = r0_tmp(motor, gearbox)
+        else 
+            r0 = r0_tmp;
+        end 
+        
+        beta0_tmp = obj.beta{1}; 
+        if isa(beta0_tmp, 'function_handle')
+            beta0 = beta0_tmp(motor, gearbox)
+        else 
+            beta0 = beta0_tmp;
+        end 
+        
+        Q0 = obj.Q{1}(motor, gearbox); % diag vector 
+        c0_tmp = obj.c{1};
+        if isa(c0_tmp, 'function_handle')
+            c0 = c0_tmp(motor, gearbox)
+        else 
+            c0 = c0_tmp;
+        end 
+        
+        c_cost_init = zeros(dim_y, 1); 
+        c_cost_init(I_idxs) = c0; 
+        c_cost_init(Isq_idxs) = Q0; % diag 
+        c_cost_init(x_idxs) = r0; 
+
+        c_rho_aug = zeros(dim_y, 1); 
+
+        if eta < 1  % TODO -- group with other things 
+        	c_rho_aug(gm_idxs) = so.* obj.settings.rho; 
+        	c_rho_aug(mu_idxs) = -so .* obj.settings.rho; 
+        end 
+
+        c_cost = c_cost_init + c_rho_aug;
+
+        %
+        %	
+        %		Assign Outputs 
+        %
+        %
+    	matrices.Q_cost = Q_cost;
+    	matrices.c_cost = c_cost; 
+    	matrices.c_rho_aug = c_rho_aug; % 
+    	matrices.beta0 = beta0;
+    	matrices.A_eq = A_eq;
+    	matrices.b_eq = b_eq; 
+    	matrices.A_ineq = A_ineq; 
+    	matrices.b_ineq = b_ineq;
+    	matrices.lb = lb; 
+    	matrices.ub = ub; 
+    	matrices.quadcon = quadcon; 
+
+    	% PROBABLY MOVE TO SEPERATE OUTPUT 
+    	matrices.I_comp = I_comp; 
+    	matrices.tau_motor_friction = tau_motor_friction;
+    	matrices.tau_motor_inertia = tau_motor_inertia; 
+    	matrices.tau_gearbox_inertia = tau_gearbox_inertia;
+    	matrices.tau_friction_static = tau_friction_static; % scalar
+
+    end % 
+
+
+
     function vprintf(obj, priority, varargin)
     %
     %
@@ -2074,3 +2044,162 @@ end % end private methods
 
 %==============================================================================
 end % end CLASSDEF
+
+
+
+
+
+
+	        		%if max_gm_mu_error > 1e-2
+	        		%{
+	        		if (eta < 1) && (min(I_comp) < 0 )
+
+	        			I_l = -I_u; 
+
+						rho = obj.settings.rho;
+	        			
+
+		        		cvx_begin quiet 
+		        			variable tau_out(n, 1); 
+		        			variable gm_cvx(n, 1);
+		        			variable mu_cvx(n, 1);
+		        			variable I_abs(n, 1);
+		        			variable I_cvx(n, 1);
+		        			variable x_cvx(w, 1);
+		        			variable y_cvx(dim_y, 1);
+		        			%binary variable delta(n, 1);
+		        			variable delta(n, 1);
+		        			variable bet(n, 1); 
+		        			%variable sig(n, 1); 
+		        			%variable phi(n, 1); 
+		        			variable z(n, 1); 
+		        			variable theta(n, 1); 
+
+		        			minimize rho*(sum(gm_cvx) - sum(mu_cvx)) + (diag(Q0)'*z) + (c0'*I_cvx) + beta0 + quad_form(x_cvx, M0) + (r0'*x_cvx);
+
+		        			subject to 
+		        				abs(I_cvx) <= I_abs;
+		        				T*x_cvx + d_comp == tau_out; 
+		        				tau_out == alph*k_t*(eta*gm_cvx + (1/eta)*mu_cvx);
+		        				gm_cvx >= 0; 
+		        				mu_cvx <= 0; 
+		        				gm_cvx + mu_cvx == I_cvx - I_comp; 
+
+
+		        				% SIGMA AND PHI DO NOTHING HERE 
+		        				% 
+
+
+		        				%tau_out == alph*eta*k_t*sig + (alph*k_t/eta)*phi; 
+		        				%sig + phi == I - I_comp; 
+
+		        				0 <= delta;
+		        				delta <= 1; 
+		        				bet + delta == 1; 
+
+		        				% FUN = I_comp - I, Fun Min = I_comp - I_u
+		        				% FIN mAx = I_com - I_l
+
+		        				epss = 1e-13; 
+
+		        				I_comp - I_cvx <= (I_comp - I_l).*(1 - delta);
+		        				I_comp - I_cvx >= epss + delta.*(I_comp - I_u - epss);
+		        				
+
+		        				gm_cvx + epss + (I_l - epss).*delta <= 0; 
+		        				mu_cvx + epss + (I_l - epss).*bet <= 0;   % REDUNDANT? 
+
+		        				%sig <= I_u .* delta;
+		        				%sig >= 0; 
+		        				%sig >= gm_cvx - I_u.*(1 - delta); 
+
+		        				%phi <= 0;
+		        				%phi >= I_l .* bet; 
+		        				%phi <= mu_cvx - I_l.*(1 - bet); 
+		        				%phi >= mu_cvx - 0;
+
+		        				z >= 0; 
+		        				theta >= 0;
+
+		        				theta + 2*I_cvx.*I_comp - I_comp.^2 <= z; 
+		        				
+		        				(gm_cvx - mu_cvx).^2 <= theta;
+
+
+		        				% cvx somehow saying infeasible 
+		        				% when setup as integer program 
+
+		        				% perhaps how its hadling booleans? 
+
+		        				I_abs.^2 <= z; 
+
+		        				if ~isempty(H)
+		        					H*x_cvx + b == 0; 
+		        				end 
+
+		        				if ~isempty(H_ineq)
+		        					H_ineq*x_cvx + b_ineq_H <= 0 ;
+		        				end 
+
+		        				I_abs <= I_u; % should limit 
+
+		        				y_cvx(1:n) == I_cvx;
+		        				y_cvx(n+1:2*n) == I_abs; % for quad costs   
+		        				y_cvx(end - w + 1:end) == x_cvx; 
+
+		        				% Quadrati constrsaints 
+		        				for j = 1:numel(quadcon)
+		        					Qc_tmp = quadcon(j).Qc;
+		        					q_tmp = quadcon(j).q; 
+		        					beta_tmp = -quadcon(j).rhs;
+
+
+		        					% Split into components 
+		        					Qj = Qc_tmp(n+1:2*n, n+1:2*n); % quad cost part 
+		        					cj = q_tmp(1:n);
+
+		        					Mj = Qc_tmp(end - w + 1:end, end - w + 1:end); 
+		        					rj = q_tmp(end - w + 1:end);
+
+		        					qd = diag(Qj);
+							        (qd'*z) + (cj'*I_cvx) + quad_form(x_cvx, Mj) + (rj'*x_cvx) - beta_tmp <= 0 ;
+							    end 
+
+
+							    for j = 1:n
+							    	if I_comp(j) >= 0 
+							    		gm_cvx(j) - mu_cvx(j) <= I_abs(j) + I_comp(j);
+							    	else
+							    		% same as before, not helpful							    	
+							    		gm_cvx(j) - mu_cvx(j) <= I_abs(j) - I_comp(j);
+							    	end 
+
+
+									quad_over_lin(gm_cvx(j), delta(j)) + quad_over_lin(-mu_cvx(j), bet(j)) <= theta(j);
+		        				
+
+
+
+							    end 
+						  
+						cvx_end 
+
+						display(result)
+						display(cvx_optval)
+
+		        		[max_gm_mu_cvx, mgme_cvx_idx] = max(min(abs(gm_cvx - (I_cvx - I_comp)),...
+		        							 abs(mu_cvx - (I_cvx - I_comp))));
+		        		
+
+
+		        		display(max_gm_mu_cvx);
+
+
+		        		if max_gm_mu_cvx > 5e-2
+		        			disp('.......awww fuckkkkkkkkkkkkkkkkk');
+		        			keyboard
+		        		else 
+		        			disp('we gucciiiiiiiiii?')
+		        		end 
+
+						%} 
