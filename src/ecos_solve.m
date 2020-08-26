@@ -30,10 +30,10 @@ G = [A_lp; cat(1, G_soc{:})];
 h = [b_lp; cat(1, h_soc{:})]; 
 
 % TODO -- incorporate more detailed settinsg into caller
-% Potnetially link verbosity as well 
+% Potnetially link verbosity as well -- add as input 
 opts =  ecosoptimset('VERBOSE', 0,...
-                             'FEASTOL', 1e-4,...
-                              'ABSTOL', 1e-4);
+                     'FEASTOL', 1e-4,...
+                      'ABSTOL', 1e-4);
 
 [x, y, data, s, z] = ecos(c, G, h, dims, A_eq, b_eq, opts); 
 
