@@ -8,7 +8,7 @@
 %
 %
 %
-clearvars; clc;
+clearvars; clc; close all; 
 % Another idea for the website 
 % ... have pictures and jupiter notebook type 
 % deal where we walk through each of the examples 
@@ -32,6 +32,8 @@ time = time(:);
 tau_des = tau_des(:); 
 n = length(time); 
 
+%disp('fix velocities ')
+%omega = abs(omega) + 0.1; 
 
 
 % NOTE: could do 2 trajectories 
@@ -81,15 +83,19 @@ for j = 1:n
     e_j(j) = 1; % one hot vector / unit basis vector 
 
     % NOTE  -- would it be more efficient to divide through by R so no Q dependednce on inputs? Still r and c dependence though 
-    spdg_j =  sparse(diag(e_j)); 
-    Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
+
+    % Q can either take in a sparse diagonal matrix OR 
+    % a non-sparse vector specifying the diagoan
+    Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; % vector type input 
     c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.alpha*omega(j)*e_j;  % TODO -- k_e 
     M{end + 1, 1} = []; 
     r{end + 1, 1} = [0; 0; -e_j];  % accounting for the other vars 
     bet{end + 1, 1} = 0; 
 
     % If negative power consumption
-    Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; 
+    spdg_j =  sparse(diag(e_j)); 
+
+    Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; % sparse matrix type input 
     c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.alpha*omega(j)*e_j;     % TODO-- k_e 
     M{end + 1, 1} = []; 
     r{end + 1, 1} = [0; 0; -e_j];  % accounting for the other vars 
@@ -101,6 +107,16 @@ end
 H = []; 
 b = [];
 
+%
+H_ineq = zeros(4, w); % Limit t_c and k_par 
+H_ineq(1, kp_idx) = 1; 
+H_ineq(2, kp_idx) = -1; 
+H_ineq(3, tau_c_idx) = 1; 
+H_ineq(4, tau_c_idx) = -1; 
+b_ineq = [-20; -20; -20; -20]; 
+
+
+
 % Fill in Torque Constraints 
 % inertial compensation 
 % accounting for par el
@@ -109,7 +125,7 @@ d = @(~, ~) tau_des;   % inertial compensation done in optimizer
 
 V_max = 48; % volts  
 I_max = 100;  % Amps 
-
+%I_max = 4; 
 
 % Fill in Bound Constraints 
 % account for voltage and current limits 
@@ -124,10 +140,16 @@ problem_data.M = M;
 problem_data.r = r; 
 problem_data.beta = bet; 
 problem_data.H = H;    % maybe A instead 
-problem_data.b = b; 
+problem_data.b = b;
+
+%problem_data.H_ineq = H_ineq;
+%problem_data.b_ineq = b_ineq; 
+
 problem_data.T = T;
 problem_data.d = d;
-problem_data.omega = omega; 
+problem_data.omega = omega;
+
+%disp('put accelerations back in');
 problem_data.omega_dot = omega_dot; 
 problem_data.I_u = I_u; 
 
@@ -135,8 +157,8 @@ problem_data.I_u = I_u;
 
 % Solve the problem 
 
-
-prob = MotorSelection(); % instantiate new motor selection problem 
+settings.solver = 'gurobi';
+prob = MotorSelection(settings); % instantiate new motor selection problem 
 
 prob.update_problem(problem_data);   % update with the data 
 

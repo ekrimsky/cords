@@ -596,9 +596,10 @@ I_u = @(motor, gearbox) min(I_max,...
 
 r_num = zeros(dim_x, 1); 
 r_num(e_gc_idx) = 1; 
+beta_num = 0;
+
 r_den = zeros(dim_x, 1);
 r_den(m_b_idx) = rho_batt; 
-beta_num = 0;
 beta_den = 0; 
 
 cost_lb = 0;
@@ -616,15 +617,17 @@ week_of_steps = 2*60*60*24*7;
 
 r_num = zeros(dim_x, 1); 
 r_num(m_b_idx) = -rho_batt; 
+beta_num = 0;
+
 r_den = zeros(dim_x, 1);
 r_den(e_gc_idx) = 1; 
-beta_num = 0;
 beta_den = 0; 
 
-cost_lb = -week_of_steps;
-cost_ub = -1; 
-%}
 
+cost_lb = -1e5; 
+cost_ub = -1e3; 
+
+%} 
 
 
 
@@ -642,6 +645,13 @@ cost_ub = -1;
 
 %
 
+% SOMETHING SEEMS NOT RIGHT HERE 7.63 * 10^-6 too low 
+% thought it was  somewhere around 300
+% is this all from inertial?????
+% --- even without inertial --- so maybe something up with problem setup
+% need to investigate (investigat wiht inertia turned off )
+
+
 % Assign all to the same struct 
 problem_data.Q = Q;
 problem_data.c = c; 
@@ -655,7 +665,7 @@ problem_data.b_ineq = b_ineq;
 problem_data.T = T;
 problem_data.d = d;
 problem_data.omega = omega_full; 
-problem_data.omega_dot = omega_dot_full; % TODO for inertial compensation
+%problem_data.omega_dot = omega_dot_full; % TODO for inertial compensation
 problem_data.I_u = I_u; 
 
 
@@ -670,8 +680,10 @@ problem_data.beta_den = beta_den;
 
 % Solve the problem 
 
+%settings.solver = 'ecos';
+settings.solver = 'gurobi';
 
-prob = MotorSelection(); % instantiate new motor selection problem 
+prob = MotorSelection(settings); % instantiate new motor selection problem 
 
 prob.update_problem(problem_data);   % update with the data 
 
@@ -685,7 +697,7 @@ prob.hints = % HOW BEST TO DO THIS?
 
 % Need to think about what return types should be 
 % What inputs would make sense????? 
-num_solutions = 3; % number of best combinations to return 
+num_solutions = 2; % number of best combinations to return 
 sol_struct = prob.optimize(num_solutions);
 
 sol = sol_struct(1).sol; 

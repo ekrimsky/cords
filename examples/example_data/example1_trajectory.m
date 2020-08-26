@@ -1,7 +1,7 @@
 clear vars; 
 
 
-dt = 0.01; 
+dt = 0.01;   % TODO -- make finer later  
 theta_min = deg2rad(-45); 
 theta_max = deg2rad(45); 
 
