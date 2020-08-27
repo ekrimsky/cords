@@ -1077,17 +1077,16 @@ methods (Access = private)
         obj.vprintf(1, table_line);
                 % frac_txt = sprintf('%d/%d', j, num_combinations);
 
-        headers1 = ["  |", "Combo x |", "|",...
-        				"Pool |", "Min  |", " Abs |", "Rel |",  " "];
+        headers1 = ["  |", "Combo x |", " Global |",...
+        				"Pool |", "Min  |",  "Rel |",  " "];
         frac_txt = sprintf(' of %d |', num_combinations); 
-        headers2 = [" Iter |", frac_txt, " LB   |",...
-                        " UB |", "  Cost |", " Gap |", " Gap |",  " Time "];
-        header_txt1 = sprintf('%+7s%+12s%+12s%+12s%+12s%+12s%+7s%+7s\n', headers1);
-        header_txt2 = sprintf('%+7s%+12s%+12s%+12s%+12s%+12s%+7s%+7s\n', headers2);
+        headers2 = [" Iter |", frac_txt, " LB  |",...
+                        " UB |", "  Cost |" , " Gap |",  " Time "];
+        header_txt1 = sprintf('%+7s%+12s%+13s%+13s%+13s%+8s%+7s\n', headers1);
+        header_txt2 = sprintf('%+7s%+12s%+13s%+13s%+13s%+8s%+7s\n', headers2);
 
         obj.vprintf(1, header_txt1);
         obj.vprintf(1, header_txt2);
-
         obj.vprintf(1, table_line);
         disp_txt = []; 
 
@@ -1097,6 +1096,7 @@ methods (Access = private)
         bad_lower_bound_flag = false;   % flag for initial lower bounds too high
         bad_upper_bound_flag = false;   % flag for initial upper bounds too low 
 
+        % Totsl convrthence criteria 
         while (max_abs_bnd_diff > obj.settings.qcvx_abstol) && ...
               (max_rel_bnd_diff > obj.settings.qcvx_reltol) && ...
                ~bad_lower_bound_flag && ~bad_upper_bound_flag
@@ -1109,13 +1109,20 @@ methods (Access = private)
 
                 % while not converged on this + break condition below
                 % Need each upper and lower bound to approach each other every iter
+
+                infeas_lb_flag = false; 
                 if outer_loop_iter == 1
                 	init_flag = true;  
                 end 
 
-                while ( ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_abstol) && ...
-                      ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
-                     (lb_list(j) <= global_ub) )  || init_flag %
+                abs_diff_j = ub_list(j) - lb_list(j);
+                rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
+
+           
+                while (lb_list(j) <= global_ub)  && ~infeas_lb_flag ...
+                      &&  (rel_diff_j > obj.settings.qcvx_reltol)  && ...        
+                          (abs_diff_j > obj.settings.qcvx_abstol) || init_flag 
+
                    
                     if init_flag 
                         bound = global_ub;
@@ -1123,13 +1130,21 @@ methods (Access = private)
                     else 
                         % upper bound found for this combo may be 
                         % lower than the global boudn for the solution pool 
-                        bound = (lb_list(j) + min(ub_list(j), global_ub))/2; 
+                        %bound = (lb_list(j) + min(ub_list(j), global_ub))/2; 
+
+                        % Split the difference between lb and ub
+                        % BUT if this is higher than the cutoff (global ub)
+                        % this is a waste of compuation so do whichever is lower 
+                        bound = min((lb_list(j) + ub_list(j))/2, global_ub); 
                     end 
 
                     % Solve 
+                    %
+                    
                     [combo_cost, tmp_sol, comp_time] = obj.combo_solve(motor,...
                                                  gearbox, bound); 
                     % DEBUG example 2 
+                    %{
                     if ~isinf(combo_cost)
                         x = tmp_sol.x; 
                         m_r = x(1);
@@ -1161,40 +1176,37 @@ methods (Access = private)
                         end 
 
                     end 
-
-
+                    %} 
 
                     % bound update 
-                    if isinf(combo_cost)    % infeasible 
+                    if isinf(combo_cost)    % infeasible - update lb 
                         lb_list(j) = bound; % if init bounds infeas, will set lb/ub to same 
+                        infeas_lb_flag = true; % will stop moving these bounds till next iter 
                     else    % feasible 
                         % this will always be a better solution than
                         % previously had for this design 
                         sols{j} = tmp_sol;
                         ub_list(j) = bound; 
                     end 
-
-                    if lb_list(j) >= global_ub
-                        lb_list(j) = ub_list(j); % set so we can ignore these 
-                    end 
-
-                    % true cost could actually be the lower bound 
-                    % in this case, always feasible and never move lower bound
-                    % so need to check convergence 
-                    if lb_list(j) > global_lb  % if moved boud up beyond global lb 
-                        % dont want to spend all the time right here completely
-                        % tightening the bounds because this might be a bad
-                        % design so move onto the next design for now 
-                        break;  
-                    end 
-                end 
+                
+                %      ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
+                    abs_diff_j = ub_list(j) - lb_list(j); 
+                    rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
+                end  % end while update bounds for combo j 
 
 
                 % Check if upper bound for design we just considered goes in the PQ 
                 %if ub_list(j) < global_ub   % ie. this goes into sol pool
+
+                if lb_list(j) >= global_ub
+                    lb_list(j) = ub_list(j); % just for computing rel diffs 
+                end 
+
+
                 if (ub_list(j) < global_ub) || ...
-                		((ub_list(j) <= global_ub) && (pq.size() < num_return))	
+                	((ub_list(j) < global_ub + eps) && (pq.size() < num_return))	
                     
+
                     % Heres THE PLAN
                     % store cell array of solutions for all options 
                     % if solution is found 
@@ -1207,13 +1219,17 @@ methods (Access = private)
 
                     pq.insert(ub_list(j), sol_struct); 
 
+                    %fprintf('inerst %d\n', j)
+
                     if pq.size() > num_return  % if inserting put us over limit 
-                        pq.pop(); % remove max element from pq                         
+                        pq.pop(); % remove max element from pq                    
                     end 
 
-                    % There may be fewer solutions than num return
-                    % then update the cutoff      
-                    [global_ub, ~] = pq.peek(); % update the cutoff 
+                    if pq.size() == num_return
+                        % There may be fewer feasible solutions than num return
+                        % If so, the global ub is always the init ub 
+                        [global_ub, ~] = pq.peek(); % update the cutoff 
+                    end 
 
                     % For the actual minimum cost 
                     if  ub_list(j) < mincost
@@ -1237,31 +1253,32 @@ methods (Access = private)
             		end 
                 end 
 
-                if lb_list(j) > global_ub  
-                    lb_list(j) = ub_list(j); % so we stop wasting time 
-                end 
 
                 % Prints 
         %header_txt = sprintf('%+7s%+9s%+13s%+13s%+13s%+10s%+10s%+9s\n', headers);
 
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-				disp_txt = sprintf('%6d%11d%s%s%s%s%s%7.1f',...
-						outer_loop_iter, j, sciprint(global_lb, '12.3'),...
-                        sciprint(global_ub,'12.3'), sciprint(mincost, '12.3'),...
-                        sciprint(max_abs_bnd_diff, '12.3'),...
-                         sciprint(max_rel_bnd_diff, '7.3'),...
-                                                         toc(start_tic));                
+				disp_txt = sprintf('%6d%12d%s%s%s%8.4f%7.1f',...
+						outer_loop_iter, j, sciprint(global_lb, '13.3'),...
+                        sciprint(global_ub,'13.3'), sciprint(mincost, '13.3'),...
+                         max_rel_bnd_diff,  toc(start_tic));                
                 obj.vprintf(1, disp_txt);
-            end 
+            end    % finish loop through combos 
 
             bnd_diff = ub_list - lb_list; 
             rel_bound_diff = bnd_diff./max(ub_list, abs(lb_list));
             max_abs_bnd_diff = max(bnd_diff);   % inf - inf = nan
             max_rel_bnd_diff = max(rel_bound_diff); 
-
-
             % Update global lower bounds 
             global_lb = min(lb_list); % no design can beat this 
+
+            % update the print 
+            obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
+            disp_txt = sprintf('%6d%12d%s%s%s%8.4f%7.1f',...
+                        outer_loop_iter, j, sciprint(global_lb, '13.3'),...
+                        sciprint(global_ub,'13.3'), sciprint(mincost, '13.3'),...
+                                max_rel_bnd_diff, toc(start_tic));                
+            obj.vprintf(1, disp_txt);
 
             % If no solution found at end of first outer loop, break 
             if (outer_loop_iter == 1) && isinf(mincost)
@@ -1271,8 +1288,14 @@ methods (Access = private)
 
             outer_loop_iter = outer_loop_iter + 1; 
             disp_txt = []; 
-            obj.vprintf(1, '\n');
+            obj.vprintf(1, '\n');   % print new line 
+
+  
+           
         end 
+
+
+        % TODO -- add a final print here 
         
         num_sols = pq.size(); % may not have found num_return feas sols 
 
@@ -2197,14 +2220,13 @@ methods (Access = private)
 
                 case 'OPTIMAL'
                     y_sol = result.x; 
-                    % subtract off cost augmentation 
-                    combo_cost = result.objval - c_rho_aug'*y_sol; 
+                    combo_cost = result.objval; % NOTE: not subtracting off augmented cost 
                 case 'SUBOPTIMAL'
 
 
                     y_sol = result.x; 
                     % subtract off cost augmentation 
-                    combo_cost = result.objval - c_rho_aug'*y_sol; 
+                    combo_cost = result.objval; 
 
                     %if combo_cost <= cutoff
                     if result.objval <= cutoff
@@ -2248,7 +2270,7 @@ methods (Access = private)
             % ...maybe copy outside if for reuse? 
             if ~isinf(result.objval)
                 y_sol = result.x; 
-                combo_cost = result.objval - c_rho_aug'*y_sol; 
+                combo_cost = result.objval; 
             else
                 y_sol = nan(dim_y, 1); 
                 combo_cost = inf;  
