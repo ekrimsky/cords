@@ -640,7 +640,7 @@ methods (Access = public)
 
 
 
-
+        disp_txt = []; 
 
     
         if strcmp(obj.problem_type, 'standard')  
@@ -820,8 +820,8 @@ methods (Access = public)
         % convert cell to N x 2 array 
         combo_list = cell2mat(combo_list); 
 
-        combo_list = combo_list(1:min(length(combo_list), 200), :); 
-        warning('remember to comment this debug thing out limiting combos to 200')
+        %combo_list = combo_list(1:min(length(combo_list), 200), :); 
+        %warning('remember to comment this debug thing out limiting combos to 200')
     
 
     end 
@@ -976,21 +976,26 @@ methods (Access = private)
             % Augment the matrices 
             nbi = length(bad_idxs); 
             dim_y = length(matrices.ub);
-            A_del_aug = sparse(1:nbi, index_map.del(bad_idxs), directions,...
+            
+            %A_del_aug = sparse(1:nbi, index_map.del(bad_idxs), directions,...
+            %                            nbi, dim_y); 
+            %disp('sadsada')
+            [~, shifted_idxs] = intersect(index_map.binary, bad_idxs, 'stable');
+            A_del_aug = sparse(1:nbi, index_map.del(shifted_idxs), directions,...
                                         nbi, dim_y); 
+
             b_del_aug = directions; 
 
             matrices.A_eq = [matrices.A_eq; A_del_aug];
             matrices.b_eq = [matrices.b_eq; b_del_aug];
 
-            [y_sol_new, combo_cost_new] = obj.socp_solve(matrices, cutoff);
+            % NOTE: calling without cuttoffs here - if use cutoff and get 
+            % nan result its possible that its feasbile just over the cutoff
+            [y_sol_new, combo_cost_new] = obj.socp_solve(matrices, inf);
 
-            [sol_new, bad_idxs_new, directions_new] = parse_solution(obj, y_sol_new, index_map,...
+            [sol_new, bad_idxs_new, directions_new] = parse_solution(obj,...
+                                                 y_sol_new, index_map,...
                                                 comp_torques,  motor, gearbox); 
-
-
-            
-
 
             % 
             %   If cost for fixed version is too different than cost 
@@ -1143,40 +1148,7 @@ methods (Access = private)
                     
                     [combo_cost, tmp_sol, comp_time] = obj.combo_solve(motor,...
                                                  gearbox, bound); 
-                    % DEBUG example 2 
-                    %{
-                    if ~isinf(combo_cost)
-                        x = tmp_sol.x; 
-                        m_r = x(1);
-                        m_b = x(2);
-                        e_gc = x(4); 
-                        c_batt = (360e3 * m_b);  % batt capacity (joules) 
-                        objval = e_gc/c_batt; 
-                        p_rfs = x(5:105);
-                        p_rfk = x(106:206);
-                        p_rhs = x(207:307);
-                        p_rhk = x(308:408);
-                        p_lfs = x(409:509);
-                        p_lfk = x(510:610);
-                        p_lhs = x(611:711);
-                        p_lhk = x(712:812);
-                        p_tot = x(813:913); % ptot
-
-                        f_rfx = x(914:1014);
-                        f_rfz = x(1015:1115);
-
-                        t = (0:0.005:0.5)'; 
-
-                        minutes = 0.5 * (1/bound)/60;
-                        hours = minutes/60; 
-
-                        if bound < 1e-6
-                            disp('ff')
-                            keyboard 
-                        end 
-
-                    end 
-                    %} 
+             
 
                     % bound update 
                     if isinf(combo_cost)    % infeasible - update lb 
@@ -1219,7 +1191,6 @@ methods (Access = private)
 
                     pq.insert(ub_list(j), sol_struct); 
 
-                    %fprintf('inerst %d\n', j)
 
                     if pq.size() > num_return  % if inserting put us over limit 
                         pq.pop(); % remove max element from pq                    
@@ -1445,13 +1416,21 @@ methods (Access = private)
         	else 
         		% TODO -- ONLY ADD WHERE NEEDED TO REDUCE PROBLEM
         		% SIZE AND REDUNDANT CONSTRAINTS 
-        		binary_aug = true; 	% Add more variables 
 
-        		del_idxs = s_idxs(end) + (1:n); 
-            	sig_idxs = del_idxs(end) + (1:n); 
-            	
-            	gmsq_idxs = sig_idxs(end) + (1:n);
-            	musq_idxs = gmsq_idxs(end) + (1:n);
+                binary_aug = true;  % Add more variables 
+                aug_idxs = find(Ico < 0); % indices where we need the extra help 
+                num_aug = length(aug_idxs);
+
+                index_map.binary = aug_idxs; % NOTE: unlike everything else NOT an index into sol vector
+
+        		%del_idxs = s_idxs(end) + (1:n); 
+            	%sig_idxs = del_idxs(end) + (1:n); 
+            	%gmsq_idxs = sig_idxs(end) + (1:n);
+            	%musq_idxs = gmsq_idxs(end) + (1:n);
+                del_idxs = s_idxs(end) + (1:num_aug); 
+                sig_idxs = del_idxs(end) + (1:num_aug); 
+                gmsq_idxs = sig_idxs(end) + (1:num_aug);
+                musq_idxs = gmsq_idxs(end) + (1:num_aug);
 
             	index_map.del = del_idxs;
             	index_map.sig = sig_idxs;
@@ -1464,10 +1443,14 @@ methods (Access = private)
         		lb = -inf(dim_y, 1);		
         		ub = inf(dim_y, 1); 
 
-            	lb(gmsq_idxs) = 0;  
-            	ub(gmsq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
-            	lb(musq_idxs) = 0;
-            	ub(musq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+            	%lb(gmsq_idxs) = 0;  
+            	%ub(gmsq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+            	%lb(musq_idxs) = 0;
+            	%ub(musq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+                lb(gmsq_idxs) = 0;  
+                ub(gmsq_idxs) = max((I_l(aug_idxs) - I_comp(aug_idxs)).^2, (I_u(aug_idxs) - I_comp(aug_idxs)).^2); 
+                lb(musq_idxs) = 0;
+                ub(musq_idxs) = ub(gmsq_idxs); 
 
 				lb(del_idxs) = 0; 	ub(del_idxs) = 1; 
 				lb(sig_idxs) = 0; 	ub(sig_idxs) = 1; 
@@ -1489,6 +1472,12 @@ methods (Access = private)
             %   Rows n+1:2n     tau_out + tau_gb_inertia = motor/gb torque  
 			%		
             A_eq_tau_x = zeros(2*n, dim_y);    % sparse? 
+
+            num_vals = nnz(T) + 4*n + nzvi; 
+            A_eq_tau_x = sparse([], [], [], 2*n, dim_y, num_vals);
+
+
+
             b_eq_tau_x = zeros(2*n, 1);     % to be filled in 
 
             A_eq_tau_x(1:n, tau_idxs) = eye(n);
@@ -1505,7 +1494,7 @@ methods (Access = private)
             % 			gamma + mu = I - I_comp
             %
             %
-            A_eq_gm_mu = zeros(n, dim_y);  
+            A_eq_gm_mu = sparse([], [], [], n, dim_y, 3*n);  
             A_eq_gm_mu(:, gm_idxs) = eye(n);
             A_eq_gm_mu(:, mu_idxs) = eye(n);
             A_eq_gm_mu(:, I_idxs) = -eye(n); 
@@ -1515,7 +1504,7 @@ methods (Access = private)
 			%
 			%		s + 2I*I_comp - I_comp^2 = Isq
 			%
-			A_eq_cost = zeros(n, dim_y); % might renmae 
+			A_eq_cost = sparse([], [], [], n, dim_y, 3*n); % might renmae 
 			A_eq_cost(:, s_idxs) = eye(n);
 			A_eq_cost(:, I_idxs) = 2*diag(I_comp);
 			A_eq_cost(:, Isq_idxs) = -eye(n);
@@ -1531,10 +1520,9 @@ methods (Access = private)
             %
             %		Extra Linear Constraints 
             %
-            if binary_aug % && false 
+            if binary_aug 
 				% For assignment of delta with driving/driven 
 				epss = 1e-9; % tolerancing 
-				A_del = zeros(2*n, dim_y);
 
 				%
 				%    Relate Delto to Driving/Driven 
@@ -1544,19 +1532,41 @@ methods (Access = private)
 				%   to take on binary values and call a mixed integer
 				%	solver to handle this 
 
+                % ONLY DO AT INDICES WHERE ITS NEEDED 
+                so_aug = so(aug_idxs); 
+
+                %{
+                A_del = zeros(2*n, dim_y);
+
 				A_del(1:n, I_idxs) = -diag(so);
 				A_del(1:n, del_idxs) = diag(so.*I_comp + I_u);
 
 				A_del(n + (1:n), I_idxs) = diag(so);
 				A_del(n + (1:n), del_idxs) = diag(so.*I_comp - I_u - epss);
 				b_del = [I_u; so.*I_comp - epss];
+                %}
+                I_comp_aug = I_comp(aug_idxs);
+                I_u_aug = I_u(aug_idxs);
+                I_l_aug = I_l(aug_idxs);
+
+                A_del = zeros(2*num_aug, dim_y);
+                A_del(1:num_aug, I_idxs(aug_idxs)) = -diag(so_aug);
+                A_del(1:num_aug, del_idxs) = diag(so_aug.*I_comp_aug + I_u_aug);
+
+                A_del(num_aug + (1:num_aug), I_idxs(aug_idxs)) = diag(so_aug);
+                A_del(num_aug + (1:num_aug), del_idxs) = diag(so_aug.*I_comp_aug - I_u_aug - epss);
+                b_del = [I_u_aug; so_aug.*I_comp_aug - epss];
 
 
 				% gm \equiv to delta*(I - I_comp)
-				tmp_max = I_u - I_comp;
-				tmp_min = I_l - I_comp;
-			
+				%tmp_max = I_u - I_comp;
+				%tmp_min = I_l - I_comp;
+                tmp_max = I_u_aug - I_comp_aug;
+                tmp_min = I_l_aug - I_comp_aug;			
+                % TODO -- switch to sparse 
+                %{
 				A_del_gm = zeros(3*n, dim_y);
+
 
 				A_del_gm(1:n, gm_idxs) = eye(n);
 				A_del_gm(1:n, del_idxs) = -diag(tmp_max);
@@ -1574,10 +1584,31 @@ methods (Access = private)
 				A_del_gm(3*n + (1:n), del_idxs) = diag(tmp_max);
 				A_del_gm(3*n + (1:n), I_idxs) = eye(n);
 				b_del_gm = [zeros(2*n, 1); -I_comp - tmp_min; I_comp + tmp_max];
+                %}
+                A_del_gm = zeros(3*num_aug, dim_y);
+                
+                A_del_gm(1:num_aug, gm_idxs(aug_idxs)) = eye(num_aug);
+                A_del_gm(1:num_aug, del_idxs) = -diag(tmp_max);
+
+                A_del_gm(num_aug + (1:num_aug), gm_idxs(aug_idxs)) = -eye(num_aug);
+                A_del_gm(num_aug + (1:num_aug), del_idxs) = diag(tmp_min);
+
+            
+                A_del_gm(2*num_aug + (1:num_aug), gm_idxs(aug_idxs)) = eye(num_aug);
+                A_del_gm(2*num_aug + (1:num_aug), del_idxs) = diag(tmp_min);
+                A_del_gm(2*num_aug + (1:num_aug), I_idxs(aug_idxs)) = -eye(num_aug);
+            
+                A_del_gm(3*num_aug + (1:num_aug), gm_idxs(aug_idxs)) = -eye(num_aug);
+                A_del_gm(3*num_aug + (1:num_aug), del_idxs) = diag(tmp_max);
+                A_del_gm(3*num_aug + (1:num_aug), I_idxs(aug_idxs)) = eye(num_aug);
+                b_del_gm = [zeros(2*num_aug, 1);...
+                         -I_comp_aug - tmp_min; I_comp_aug + tmp_max];
 							
+                % TODO SPEED UP             
 				A_ineq_other = [A_ineq_other; A_del; A_del_gm];
 				b_ineq_other = [b_ineq_other; b_del; b_del_gm];
 
+                %{
 				%
 				%		 gm_sq + mu_sq = s 
 				%
@@ -1594,6 +1625,24 @@ methods (Access = private)
 				A_del_sig(:, del_idxs) = eye(n);
 				A_del_sig(:, sig_idxs) = eye(n);
 				b_del_sig = ones(n, 1);
+                %}
+                
+                %
+                %        gm_sq + mu_sq = s 
+                %
+                A_gmmu_sq = zeros(num_aug, dim_y);
+                A_gmmu_sq(:, gmsq_idxs) = eye(num_aug);
+                A_gmmu_sq(:, musq_idxs) = eye(num_aug);
+                A_gmmu_sq(:, s_idxs(aug_idxs)) = -eye(num_aug);
+                b_gmmu_sq = zeros(num_aug, 1);
+    
+                %
+                %        delta + sigma = 1 
+                %
+                A_del_sig = zeros(num_aug, dim_y);
+                A_del_sig(:, del_idxs) = eye(num_aug);
+                A_del_sig(:, sig_idxs) = eye(num_aug);
+                b_del_sig = ones(num_aug, 1);
 
 				A_eq_other = [A_eq_other; A_del_sig; A_gmmu_sq];
 				b_eq_other = [b_eq_other; b_del_sig; b_gmmu_sq];
@@ -1604,6 +1653,7 @@ methods (Access = private)
         	ub = inf(dim_y, 1);
 
             A_eq_tau_x = zeros(2*n, dim_y);    % sparse? 
+
             b_eq_tau_x = zeros(2*n, 1);
             A_eq_tau_x(1:n, tau_idxs) = eye(n);
             A_eq_tau_x(1:n, x_idxs) = -T; 
@@ -1655,7 +1705,7 @@ methods (Access = private)
             end 
 
             % Friction Cone 
-            A_ineq_zv = zeros(2*nzvi, dim_y);
+            A_ineq_zv = sparse([], [], [], 2*nzvi, dim_y, 2*nzvi);
             A_ineq_zv(1:nzvi, zv_idxs) = 1; 
             A_ineq_zv(nzvi + (1:nzvi), zv_idxs) = -1; 
             b_ineq_zv = tau_friction_static * ones(2*nzvi, 1);
@@ -1666,7 +1716,8 @@ methods (Access = private)
         end 
 
         if ~isempty(H)
-            A_eq_H = zeros(size(H, 1), dim_y);
+            %A_eq_H = zeros(size(H, 1), dim_y);
+            A_eq_H = sparse([], [], [], size(H, 1), dim_y, nnz(H));
             A_eq_H(:, x_idxs) = -H;   % note signs
             b_eq_H = b; 
         else 
@@ -1674,6 +1725,7 @@ methods (Access = private)
             b_eq_H = [];
         end
 
+        % very slow 
         A_eq = [A_eq_tau_x; A_eq_other; A_eq_H]; 
         b_eq = [b_eq_tau_x; b_eq_other; b_eq_H]; % NOTE signs 
 
@@ -1790,10 +1842,15 @@ methods (Access = private)
 	        %      Rotated SOC Constraints 
 	        %		gm^2 <= s.*delta
 	        %		mu^2 <= s.*(beta) -- need to define beta 
-
+  
 	        if binary_aug 
-	        	for i = 1:n 
+                gm_aug_idxs = gm_idxs(aug_idxs);  % USEFUL ABOVE TODO 
+                mu_aug_idxs = mu_idxs(aug_idxs); 
+	        	%for i = 1:n 
+                for i = 1:num_aug 
+
 	        		% gm^2 <= gm_sq .*delta 
+                    %{
 			    	qc_idx = qc_idx + 1; 
 			        row = [gm_idxs(i); gmsq_idxs(i); del_idxs(i)];
 			        col = [gm_idxs(i); del_idxs(i); gmsq_idxs(i)];
@@ -1803,8 +1860,19 @@ methods (Access = private)
 		            quadcon(qc_idx).q = zeros(dim_y, 1);
 		            quadcon(qc_idx).sense = '<'; 
 		            quadcon(qc_idx).rhs = 0; 
+                    %} 
+                    qc_idx = qc_idx + 1; 
+                    row = [gm_aug_idxs(i); gmsq_idxs(i); del_idxs(i)];
+                    col = [gm_aug_idxs(i); del_idxs(i); gmsq_idxs(i)];
+                    vals = [1; -0.5; -0.5]; 
+                    Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
+                    quadcon(qc_idx).Qc = Qc_tmp; 
+                    quadcon(qc_idx).q = zeros(dim_y, 1);
+                    quadcon(qc_idx).sense = '<'; 
+                    quadcon(qc_idx).rhs = 0; 
 
 		            % mu^2 <= mu_sq .*sigma 
+                    %{
 			    	qc_idx = qc_idx + 1; 
 			        row = [mu_idxs(i); musq_idxs(i); sig_idxs(i)];
 			        col = [mu_idxs(i); sig_idxs(i); musq_idxs(i)];
@@ -1814,6 +1882,16 @@ methods (Access = private)
 		            quadcon(qc_idx).q = zeros(dim_y, 1);
 		            quadcon(qc_idx).sense = '<'; 
 		            quadcon(qc_idx).rhs = 0; 
+                    %}
+                    qc_idx = qc_idx + 1; 
+                    row = [mu_aug_idxs(i); musq_idxs(i); sig_idxs(i)];
+                    col = [mu_aug_idxs(i); sig_idxs(i); musq_idxs(i)];
+                    vals = [1; -0.5; -0.5]; 
+                    Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
+                    quadcon(qc_idx).Qc = Qc_tmp; 
+                    quadcon(qc_idx).q = zeros(dim_y, 1);
+                    quadcon(qc_idx).sense = '<'; 
+                    quadcon(qc_idx).rhs = 0; 
 		        end 
 	        end 
 	    else 
@@ -1924,7 +2002,7 @@ methods (Access = private)
     	matrices.ub = ub; 
     	matrices.quadcon = quadcon; 
 
-
+       
     	% 
         compensation_torques.I_comp = I_comp;  % maybe inclue in comp values? 
     	compensation_torques.tau_motor_friction = tau_motor_friction;
@@ -2033,6 +2111,12 @@ methods (Access = private)
         bad_idxs = tau_bad_idxs;
 
         directions = driving(bad_idxs); 
+
+
+
+
+
+
 
         %{
         gmmu_tol = 1e-3; 
