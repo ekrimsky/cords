@@ -148,8 +148,6 @@ problem_data.b = b;
 problem_data.T = T;
 problem_data.d = d;
 problem_data.omega = omega;
-
-%disp('put accelerations back in');
 problem_data.omega_dot = omega_dot; 
 problem_data.I_u = I_u; 
 

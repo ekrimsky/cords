@@ -123,7 +123,10 @@ methods (Access = public)
         if settings.debug; fprintf('Debug is on...\n');                 end; 
         if ~isfield(settings, 'rho'); settings.rho = 1e-4;              end
         if ~isfield(settings, 'verbose'); settings.verbose = 1;         end
-        if ~isfield(settings, 'print_freq'); settings.print_freq = 500; end 
+        if ~isfield(settings, 'print_freq'); settings.print_freq = 500; end
+        if ~isfield(settings, 'reltol'); settings.reltol = 1e-3;        end 
+        if ~isfield(settings, 'abstol'); settings.abstol = 1e-7;        end  
+
         if ~isfield(settings, 'qcvx_reltol')
         	settings.qcvx_reltol = 1e-3; 
         end 
@@ -976,12 +979,8 @@ methods (Access = private)
             % Augment the matrices 
             nbi = length(bad_idxs); 
             dim_y = length(matrices.ub);
-            
-            %A_del_aug = sparse(1:nbi, index_map.del(bad_idxs), directions,...
-            %                            nbi, dim_y); 
-            %disp('sadsada')
             [~, shifted_idxs] = intersect(index_map.binary, bad_idxs, 'stable');
-            A_del_aug = sparse(1:nbi, index_map.del(shifted_idxs), directions,...
+            A_del_aug = sparse(1:nbi, index_map.del(shifted_idxs), ones(nbi, 1),...
                                         nbi, dim_y); 
 
             b_del_aug = directions; 
@@ -1006,11 +1005,12 @@ methods (Access = private)
 
             % would be always > 0 except for the rho augmentation  
             cost_diff = combo_cost_new - combo_cost; 
-
+            cost_diff_rel = cost_diff/min(abs(combo_cost), abs(combo_cost_new));
             
 
-            % TODO - rigor 
-            if cost_diff > 1e-2 
+            if ((cost_diff_rel > obj.settings.reltol) && ...
+                (cost_diff > obj.settings.abstol)) ||  ~isempty(bad_idxs_new)
+
 
         %       If still NOT good -- call mixed integer solver
         %           -- however, may want to save this problem for layer 
@@ -1018,6 +1018,17 @@ methods (Access = private)
         %       in logging want to know how many problem required multiple solves
         %       and how many required mixed integer solvers
         %
+                gm_init = y_sol(index_map.gm); 
+                mu_init = y_sol(index_map.mu); 
+                del_init = y_sol(index_map.del);
+                I_init = y_sol(index_map.I);
+                I_shift_init = I_init - comp_torques.I_comp;
+
+                gm_new = y_sol_new(index_map.gm);  
+                mu_new = y_sol_new(index_map.mu); 
+                del_new = y_sol_new(index_map.del); 
+                I_new = y_sol_new(index_map.I); 
+                I_shift_new = I_new - comp_torques.I_comp; 
 
                 disp('cost too diff call mixed into')
                 keyboard 
@@ -1025,6 +1036,12 @@ methods (Access = private)
                 exitflag = 2; 
             end 
 
+            if cost_diff == 0
+
+                disp('how zero -- zero zero?????')
+
+                keyboard
+            end 
 
         end 
 
@@ -1391,12 +1408,20 @@ methods (Access = private)
         I_idxs = 1:n;
         Isq_idxs = I_idxs(end) + (1:n);	 % equivalent to I squared 
         tau_idxs = Isq_idxs(end) + (1:n); 
-        x_idxs = tau_idxs(end) + (1:w); 
+
+        if nzvi > 0 
+            zv_idxs = tau_idxs(end) + (1:nzvi);      % for static friction 
+            x_idxs = zv_idxs(end) + (1:w); 
+        else 
+            zv_idxs = []; 
+            x_idxs = tau_idxs(end) + (1:w);
+        end 
 
         index_map.I = I_idxs; 
         index_map.Isq = Isq_idxs; 
         index_map.tau = tau_idxs;
         index_map.x = x_idxs;
+        index_map.zv_idxs = zv_idxs;
 
         Ico = I_comp.*omega;        
         binary_aug = false; 
@@ -1437,7 +1462,7 @@ methods (Access = private)
             	index_map.gmsq = gmsq_idxs;
             	index_map.musq = musq_idxs; 
 
-            	dim_y = musq_idxs(end) + nzvi;  % total dimension of opt vector 
+            	dim_y = musq_idxs(end);  % total dimension of opt vector 
 
             	% Bounds on optimizatoin vatiable 
         		lb = -inf(dim_y, 1);		
@@ -1471,13 +1496,8 @@ methods (Access = private)
             %   Rows 1:n        Tx + d = tau_out  
             %   Rows n+1:2n     tau_out + tau_gb_inertia = motor/gb torque  
 			%		
-            A_eq_tau_x = zeros(2*n, dim_y);    % sparse? 
-
             num_vals = nnz(T) + 4*n + nzvi; 
             A_eq_tau_x = sparse([], [], [], 2*n, dim_y, num_vals);
-
-
-
             b_eq_tau_x = zeros(2*n, 1);     % to be filled in 
 
             A_eq_tau_x(1:n, tau_idxs) = eye(n);
@@ -1522,8 +1542,8 @@ methods (Access = private)
             %
             if binary_aug 
 				% For assignment of delta with driving/driven 
-				epss = 1e-9; % tolerancing 
-
+				%epss = 1e-9; % tolerancing 
+                epss = 0;
 				%
 				%    Relate Delto to Driving/Driven 
 				%		[Delta = 1] <===> [Driving]
@@ -1534,6 +1554,8 @@ methods (Access = private)
 
                 % ONLY DO AT INDICES WHERE ITS NEEDED 
                 so_aug = so(aug_idxs); 
+                gm_aug_idxs = gm_idxs(aug_idxs);  % USEFUL ABOVE TODO 
+                mu_aug_idxs = mu_idxs(aug_idxs); 
 
                 %{
                 A_del = zeros(2*n, dim_y);
@@ -1561,9 +1583,7 @@ methods (Access = private)
 				% gm \equiv to delta*(I - I_comp)
 				%tmp_max = I_u - I_comp;
 				%tmp_min = I_l - I_comp;
-                tmp_max = I_u_aug - I_comp_aug;
-                tmp_min = I_l_aug - I_comp_aug;			
-                % TODO -- switch to sparse 
+	
                 %{
 				A_del_gm = zeros(3*n, dim_y);
 
@@ -1585,20 +1605,23 @@ methods (Access = private)
 				A_del_gm(3*n + (1:n), I_idxs) = eye(n);
 				b_del_gm = [zeros(2*n, 1); -I_comp - tmp_min; I_comp + tmp_max];
                 %}
-                A_del_gm = zeros(3*num_aug, dim_y);
+                % TODO -- switch to sparse 
+                tmp_max = I_u_aug - I_comp_aug + 0.1;
+                tmp_min = I_l_aug - I_comp_aug - 0.1;     
+
+                A_del_gm = zeros(4*num_aug, dim_y);
                 
-                A_del_gm(1:num_aug, gm_idxs(aug_idxs)) = eye(num_aug);
+                A_del_gm(1:num_aug, gm_aug_idxs) = eye(num_aug);
                 A_del_gm(1:num_aug, del_idxs) = -diag(tmp_max);
 
-                A_del_gm(num_aug + (1:num_aug), gm_idxs(aug_idxs)) = -eye(num_aug);
+                A_del_gm(num_aug + (1:num_aug), gm_aug_idxs) = -eye(num_aug);
                 A_del_gm(num_aug + (1:num_aug), del_idxs) = diag(tmp_min);
-
             
-                A_del_gm(2*num_aug + (1:num_aug), gm_idxs(aug_idxs)) = eye(num_aug);
-                A_del_gm(2*num_aug + (1:num_aug), del_idxs) = diag(tmp_min);
+                A_del_gm(2*num_aug + (1:num_aug), gm_aug_idxs) = eye(num_aug);
+                A_del_gm(2*num_aug + (1:num_aug), del_idxs) = -diag(tmp_min);
                 A_del_gm(2*num_aug + (1:num_aug), I_idxs(aug_idxs)) = -eye(num_aug);
             
-                A_del_gm(3*num_aug + (1:num_aug), gm_idxs(aug_idxs)) = -eye(num_aug);
+                A_del_gm(3*num_aug + (1:num_aug), gm_aug_idxs) = -eye(num_aug);
                 A_del_gm(3*num_aug + (1:num_aug), del_idxs) = diag(tmp_max);
                 A_del_gm(3*num_aug + (1:num_aug), I_idxs(aug_idxs)) = eye(num_aug);
                 b_del_gm = [zeros(2*num_aug, 1);...
@@ -1648,7 +1671,7 @@ methods (Access = private)
 				b_eq_other = [b_eq_other; b_del_sig; b_gmmu_sq];
 			end 
         else  % NO GEARBOX 
-            dim_y = x_idxs(end) + nzvi; 
+            dim_y = x_idxs(end); 
             lb = -inf(dim_y, 1);		
         	ub = inf(dim_y, 1);
 
@@ -1687,10 +1710,6 @@ methods (Access = private)
         %
         %		Adjust A_eq_tau_x and b_eq_tau_x accordingly
         %
-
- 		% Zero Vel - Use Static Friction 
- 		zv_idxs = x_idxs(end) + (1:nzvi);  % indices in opt vec NOT omega 
-        index_map.zv_idxs = zv_idxs;
         if nzvi > 0 
         	% TODO -- probably consider gb fully efficient at zero vel?
         	% think through a little more (but then just alpha on next line)
@@ -1826,8 +1845,6 @@ methods (Access = private)
 
 		        % gm^2 - 2 gm*mu + mu_^2 
 	            Qc_tmp = sparse(row, col, vals, dim_y, dim_y); 
-
-
 		        q_tmp = zeros(dim_y, 1);
 		        q_tmp(s_idxs(i)) = -1; 
 
@@ -1840,27 +1857,19 @@ methods (Access = private)
 	        %... its possible dont need both of these 
 	        %
 	        %      Rotated SOC Constraints 
-	        %		gm^2 <= s.*delta
-	        %		mu^2 <= s.*(beta) -- need to define beta 
+	        %		gm^2 <= gm_sq.*delta
+	        %		mu^2 <= mu_sq.*sigma
+            %
+            %
+            %   NOTE: not clear that we need this, may be fine without??
+            % This may actually be detrimental? Lets try with crazier accels 
   
-	        if binary_aug 
-                gm_aug_idxs = gm_idxs(aug_idxs);  % USEFUL ABOVE TODO 
-                mu_aug_idxs = mu_idxs(aug_idxs); 
+	        if binary_aug % && false 
+                
 	        	%for i = 1:n 
                 for i = 1:num_aug 
 
 	        		% gm^2 <= gm_sq .*delta 
-                    %{
-			    	qc_idx = qc_idx + 1; 
-			        row = [gm_idxs(i); gmsq_idxs(i); del_idxs(i)];
-			        col = [gm_idxs(i); del_idxs(i); gmsq_idxs(i)];
-			        vals = [1; -0.5; -0.5]; 
-			        Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
-			        quadcon(qc_idx).Qc = Qc_tmp; 
-		            quadcon(qc_idx).q = zeros(dim_y, 1);
-		            quadcon(qc_idx).sense = '<'; 
-		            quadcon(qc_idx).rhs = 0; 
-                    %} 
                     qc_idx = qc_idx + 1; 
                     row = [gm_aug_idxs(i); gmsq_idxs(i); del_idxs(i)];
                     col = [gm_aug_idxs(i); del_idxs(i); gmsq_idxs(i)];
@@ -1872,17 +1881,6 @@ methods (Access = private)
                     quadcon(qc_idx).rhs = 0; 
 
 		            % mu^2 <= mu_sq .*sigma 
-                    %{
-			    	qc_idx = qc_idx + 1; 
-			        row = [mu_idxs(i); musq_idxs(i); sig_idxs(i)];
-			        col = [mu_idxs(i); sig_idxs(i); musq_idxs(i)];
-			        vals = [1; -0.5; -0.5]; 
-			        Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
-			        quadcon(qc_idx).Qc = Qc_tmp; 
-		            quadcon(qc_idx).q = zeros(dim_y, 1);
-		            quadcon(qc_idx).sense = '<'; 
-		            quadcon(qc_idx).rhs = 0; 
-                    %}
                     qc_idx = qc_idx + 1; 
                     row = [mu_aug_idxs(i); musq_idxs(i); sig_idxs(i)];
                     col = [mu_aug_idxs(i); sig_idxs(i); musq_idxs(i)];
@@ -1894,7 +1892,7 @@ methods (Access = private)
                     quadcon(qc_idx).rhs = 0; 
 		        end 
 	        end 
-	    else 
+	    else    % eta = 1 
 	    	%
 	    	%	Add quadratic constraint I^2 <= I_sq 
 	    	%	
@@ -2103,7 +2101,12 @@ methods (Access = private)
 
         % TODO -- let the tolerancing on these be 
         % something that can be set (for tau and gm/mu)
-        tau_tol = 1e-2; 
+
+        % NOTE: when only using tau, smaller tolerance can give better results
+        % because will detect more iffy gm/mu indices 
+        % may make more sense to check for gm/mu issues directly 
+
+        tau_tol = 1e-3; 
         tau_check = sol.tau - (sol.tau_friction + sol.tau_inertia);
         tau_error = tau_check - sol.tau_em; 
 
@@ -2114,117 +2117,6 @@ methods (Access = private)
 
 
 
-
-
-
-
-        %{
-        gmmu_tol = 1e-3; 
-
-        if true % NOT A DEBUG THING -- BUT OTHERS MIGHT BE NOTE 
-
-
-            % Making sure everything adds up 
-
-
-            [max_tau_error, mte_idx] = max(abs(tau_error));
-
-
-            gmmu_bad_idxs = []; % will overwrite 
-
-
-            if max_tau_error > gmmu_tol
-                % NOTE: if this get embeded may wanto return something on these conditoins 
-                display(max_tau_error); 
-                disp('Torque matchup error')
-            end 
-
-            if eta < 1
-
-                s = y_sol(index_map.s);
-
-                % TO help debug
-                I = sol.I;
-                gm = sol.I_gm;
-                mu = sol.I_mu;
-
-                % Maximum Error From Convex Reformulation 
-                so = round(sign(obj.omega) + 0.1); 
-                max_objective_error = obj.settings.rho*sum(so.*(gm - mu));% in objective value
-
-    
-                I_shift = sol.I - I_comp; 
-                gmmu_error = min(abs(gm - I_shift), abs(mu - I_shift));
-
-                [max_gm_mu_error, mgme_idx] = max(gmmu_error);
-                    
-                gmmu_bad_idxs = find(gmmu_error > gmmu_tol);     
-
-
-                if (max_gm_mu_error > gmmu_tol) && (max_tau_error >= tau_tol)
-
-                    if isfield(index_map, 'del') % if binary aug 
-
-                        del = y_sol(index_map.del);
-                        sig = y_sol(index_map.sig);
-
-                        gmsq = y_sol(index_map.gmsq);
-                        musq = y_sol(index_map.musq);
-                        
-
-                    else 
-
-                        disp('how the FFFFFFFFFFFFFFFFFF')
-                        keyboard
-                        %error('SHOULDNT BE POSSIBLE')
-                        n = length(sol.I); 
-                        del = zeros(n, 1);
-                        sig = zeros(n, 1);
-
-
-                    end 
-
-                    disp('....')
-                    disp('max gm mu error')
-
-                    % TODO -- remove these, not helpful 
-
-                    vel_at_error = obj.omega(mgme_idx);
-                    comp_current_at_error = I_comp(mgme_idx);
-
-                    gm_bad = gm(mgme_idx);
-                    mu_bad = mu(mgme_idx);
-                    I_bad = sol.I(mgme_idx);
-                    Isq_bad = Isq(mgme_idx);
-                    s_bad = s(mgme_idx);
-
-
-                    del_bad = del(mgme_idx);
-
-                    display(del_bad);
-                    display(gm_bad);
-                    display(mu_bad);
-                    %display(mgme_idx)
-                    %display(max_gm_mu_error);
-                    %display(vel_at_error);
-                    %display(comp_current_at_error);
-                    %keyboard
-
-                end 
-
-
-            end
-
-            % TODO 
-            % NOTE: May want to restructure so we only both fixing the 
-            % problem based on torque error 
-            % the error in torque is all we care about 
-            bad_idxs = unique([tau_bad_idxs; gmmu_bad_idxs]); 
-            directions = driving(bad_idxs); %TODO -- think on this
-
-
-        end  % end if (well, no if true) debug 
-        %} 
 
         if obj.settings.debug 
             % TODO -- add more feautures to solution

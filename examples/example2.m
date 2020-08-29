@@ -86,8 +86,7 @@ omega_dot_full = [omega_dot_rfs; omega_dot_rfk; omega_dot_rhs; omega_dot_rhk;...
 n = length(time);  % numbre of time points 
 % Then a nice quick animation
 
-
-
+% Need to add something to make this more reaslistc -- right now high gear ratios and heavy batteries 
 
 
 
@@ -537,14 +536,16 @@ for motor = 1:N_motors % loop through motors
         r_motor_j = zeros(dim_x, 1);
         r_motor_j(p_idxs(j)) = -1; 
         
-        Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
+        %Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
+        Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; 
         c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_e*gearbox.alpha*omega(j)*e_j;  % TODO -- k_e 
         M{end + 1, 1} = []; 
         r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
         bet{end + 1, 1} = 0; 
 
         % If negative MOTOR power consumption
-        Q{end + 1, 1} = @(motor, ~) Phi*motor.R * spdg_j; 
+        %Q{end + 1, 1} = @(motor, ~) Phi*motor.R * spdg_j; 
+        Q{end + 1, 1} = @(motor, ~) Phi*motor.R * e_j; 
         c{end + 1, 1} = @(motor, gearbox) Phi*motor.k_e*gearbox.alpha*omega(j)*e_j;     % TODO-- k_e 
         M{end + 1, 1} = []; 
         r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
@@ -664,8 +665,8 @@ problem_data.H_ineq = H_ineq;
 problem_data.b_ineq = b_ineq;
 problem_data.T = T;
 problem_data.d = d;
-problem_data.omega = omega_full; 
-%problem_data.omega_dot = omega_dot_full; % TODO for inertial compensation
+problem_data.omega = omega_full;  % all concat 
+problem_data.omega_dot = omega_dot_full; % TODO for inertial compensation
 problem_data.I_u = I_u; 
 
 
