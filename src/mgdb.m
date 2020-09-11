@@ -35,12 +35,15 @@ properties (GetAccess = public, SetAccess = private)
 
     verbosity
 
+    dd_key
     %
     %
     %       Filter Cutoffs -- NOTE: allow direct access or no? 
     %
     %
     filters 
+
+
 
     % Setting up as toolbox/package might make specifying file paths easier? 
 end 
@@ -56,6 +59,7 @@ methods (Access = public)
         
         % Could look in other places too i guess
         % cell array of paths 
+        obj.dd_key = 'DD'; 
         database_paths = {'~/Documents/MotorDatabase'};           % we will look recursively in this path 
 
         % motor files called "*_motors.csv"
@@ -64,13 +68,19 @@ methods (Access = public)
         % see somewhere else (TODO) for formatting 
         for i = 1:length(database_paths)
             pth = database_paths{i};
+            % NOTE -- will this work on windows 
+            % TODO -- double checj and maybe rewrite with "fullfile" for 
+            % windows compatibility 
             motor_file_tmp = dir(sprintf('%s/**/*_motors.csv', pth));
             gearbox_file_tmp = dir(sprintf('%s/**/*_gearboxes.csv', pth));
             compat_file_tmp = dir(sprintf('%s/**/*_compatibility.csv', pth));
 
-            m_tmp = cellfun(@(x) fullfile(x.folder, x.name), num2cell(motor_file_tmp), 'UniformOutput', false);
-            g_tmp = cellfun(@(x) fullfile(x.folder, x.name), num2cell(gearbox_file_tmp), 'UniformOutput', false);
-            c_tmp = cellfun(@(x) fullfile(x.folder, x.name), num2cell(compat_file_tmp), 'UniformOutput', false);
+            m_tmp = cellfun(@(x) fullfile(x.folder, x.name),...
+                            num2cell(motor_file_tmp), 'UniformOutput', false);
+            g_tmp = cellfun(@(x) fullfile(x.folder, x.name),...
+                         num2cell(gearbox_file_tmp), 'UniformOutput', false);
+            c_tmp = cellfun(@(x) fullfile(x.folder, x.name),...
+                           num2cell(compat_file_tmp), 'UniformOutput', false);
             if i == 1
                 motor_files = m_tmp;
                 gearbox_files = g_tmp;
@@ -91,14 +101,16 @@ methods (Access = public)
         % files (could be compatible with multiple manufactureres for example)
         obj.motors = containers.Map(motor_keys, motor_values);
         obj.gearboxes = containers.Map(gb_keys, gb_values);
+        % add the 'dummy' gearbox for a direct drive option (compatible with all motors)
+        direct_drive = struct('Key', 'DD', 'Manufacturer', 'none', 'ID', 'DD',...
+                        'stages', 0, 'ratio', 1, 'mass', 0, 'inerita', 0,...
+                        'efficiency', 1, 'direction', 1,,...
+                        'max_int_torque', inf, 'max_cont_torque', inf);  
+        obj.gearboxes('DD', direct_drive); % add direct drive option to the map 
+
         obj.compatibility = containers.Map('KeyType', 'char', 'ValueType', 'any'); % value type will be other maps 
         % Read in compatibility csvs 
         add_compatibility(obj, compat_files); % TODO -- all files 
-
-        % TODO -- add direct drive 'gearbox'
-
-
-
 
         %
         %
@@ -107,6 +119,12 @@ methods (Access = public)
         %  filters is a struct where each field is different criteria
         %  initialized to not filter out any possible choices 
         % 
+
+
+
+        %
+        %           Save Object Out So Can Be Loaded by motor selection 
+        %   
 
     end 
 
@@ -198,9 +216,6 @@ methods (Access = private)
         % could combine all compat files together to make simpler 
         % assume this is done somewhere above this line of code 
 
-        dd_key = 'DD';
-
-
         gearbox_keys = obj.gearboxes.keys; % WILL RETURN THE KEYS SORTED ALPHABETICALLY 
 
         % TODO -- check that compat files is cell array even if only 1 file 
@@ -261,9 +276,10 @@ methods (Access = private)
                     end 
                 else 
                     % Add all the new ones together AND a direct drive option
+                    % It is much faster to add lots of things to the map
+                    % at once so it does not need to get resized and copied 
                     inf_cell = num2cell(inf(1, length(gb_match_keys) + 1)); 
-                    tmp_map = containers.Map(['DD', gb_match_keys], inf_cell); 
-                    obj.compatibility(motor_key) = tmp_map;
+                    obj.compatibility(motor_key) = containers.Map([obj.dd_key, gb_match_keys], inf_cell); 
                 end 
 
 
@@ -271,6 +287,15 @@ methods (Access = private)
             end % finish reading through lines of this file 
             fclose(compat_fid); 
         end % end looping through files 
+
+        % Now add direct drive for any motors that were skipped 
+        motor_keys = obj.motors.keys;
+        for m_idx = 1:length(motor_keys)
+            motor_key = motor_keys{m_idx};
+            if ~obj.compatibility.isKey(motor_key)
+                obj.compatibility(motor_key) = containers.Map(obj.dd_key, inf); 
+            end 
+        end 
     end 
 
 
@@ -306,7 +331,7 @@ function [motor_keys, motor_values] = add_motors(motor_files)
         else % append 
             % NOTE may want a faster append method 
             motor_keys = [motor_keys, motor_keys_tmp];
-            motor_values = [motor_values, motor_cells_tmp]; 
+            motor_values = [motor_values; motor_cells_tmp]; 
         end 
     end 
 end 
@@ -320,7 +345,7 @@ function [gb_keys, gb_values] = add_gearboxes(gearbox_files)
         else % append 
             % NOTE may want a faster append method 
             gb_keys = [gb_keys, gb_keys_tmp];
-            gb_values = [gb_values, gb_cells_tmp]; 
+            gb_values = [gb_values; gb_cells_tmp]; 
         end 
     end 
 end 
