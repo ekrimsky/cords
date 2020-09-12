@@ -30,10 +30,15 @@ properties (GetAccess = public, SetAccess = private)
 
     
     settings % for solver, rho, verbose, print frequency 
-    rankings % for combos - may want to rename 
-    ranking_matrix 
+
+
+
 
     % ----- Problem Data -- May want more dscriptive names?
+
+    problem_type   % char array, 'standard' (SOCP) or 'fractional'
+    problem_data % or just data? 
+
     omega
     omega_dot 
     % indices in omega corresponding to omega == 0 
@@ -49,34 +54,10 @@ properties (GetAccess = public, SetAccess = private)
     b_ineq
     T
     d 
-    I_u
+    I_u  % move out? 
     lin_ineq % 1xm binary indicator matrix. 1 iff Q_j = 0, M_j = 0 
 
-  
-    % ----------- Dimensions of matrices/vectors ------------
-    n   % length of trajectory/trajectories
-    m   % number of gen ineqs 
-    w   % dimension of x 
-    p   % 
-
-    problem_type   % char array, 'standard' (SOCP) or 'fractional'
-
-    %---- Motor and Gear data tables ----------
-
-    test_motor          % for validating input properties 
-    test_gearbox        % for validating input properitse 
-
-    mg_database     % motor gearbox database object 
-    %{
-    motors  
-    gearboxes
-    num_motors
-    num_gearboxes 
-    %} 
-    % --- Data specifially for Quasiconvex Problems -----
-
-
-    % with offset at same compuational cost 
+        % with offset at same compuational cost 
     % will need restrucutre inputs 
     % c_num, c_den, beta_num, beta_den 
     cost_ub 
@@ -86,6 +67,30 @@ properties (GetAccess = public, SetAccess = private)
     r_den
     beta_num
     beta_den
+    % ----------- Dimensions of matrices/vectors ------------
+    n   % length of trajectory/trajectories
+    m   % number of gen ineqs 
+    w   % dimension of x 
+    p   % 
+
+
+    %---- Motor and Gear data tables ----------
+
+    test_motor          % for validating input properties 
+    test_gearbox        % for validating input properitse 
+    mg_database     % motor gearbox database object 
+    %{
+    motors  
+    gearboxes
+    num_motors
+    num_gearboxes 
+    rankings % for combos - may want to rename 
+    ranking_matrix 
+    %} 
+    % --- Data specifially for Quasiconvex Problems -----
+
+
+
 
 
     % TODO Friction and other model settings? 
@@ -114,66 +119,17 @@ methods (Access = public)
         % Can call the update problem later if want to instantiate with 
         % problem 
 
-        % Default settings -- NOTE: may want to to be able to instantiate with settings 
+        % NOTE: other inputs could include database search paths???????
+
+        % If no settings provided, create empty settings and fill in with defaults 
         if ~isempty(varargin)
         	settings = varargin{1};  % then validate 
         else 
         	settings = struct(); 
         end 
-
-        % Fill in default settings 
-        if ~isfield(settings, 'debug'); settings.debug = true; end 
-        assert(islogical(settings.debug), 'debug setting must be true/false');
-        if settings.debug; fprintf('Debug is on...\n');                 end; 
-        if ~isfield(settings, 'rho'); settings.rho = 1e-4;              end
-        if ~isfield(settings, 'verbose'); settings.verbose = 1;         end
-        if ~isfield(settings, 'print_freq'); settings.print_freq = 500; end
-        if ~isfield(settings, 'reltol'); settings.reltol = 1e-3;        end 
-        if ~isfield(settings, 'abstol'); settings.abstol = 1e-7;        end  
-
-        if ~isfield(settings, 'qcvx_reltol')
-        	settings.qcvx_reltol = 1e-3; 
-        end 
-        if ~isfield(settings, 'qcvx_abstol')
-        	settings.qcvx_abstol = 1e-7; 
-        end 
-
-
-        valid_solvers = {'gurobi', 'ecos', 'sedumi'};
-        has_gurobi = ~isempty(which('gurobi.m'));
-        has_ecos = ~isempty(which('ecos.m'));
-        has_sedumi = ~isempty(which('sedumi.m'));
-
-        if ~isfield(settings, 'solver')
-        	settings.solver = 'gurobi'; % default, fastest
-        end
-
-        if strcmp(settings.solver, 'gurobi')
-        	if ~has_gurobi
-        		settings.solver = 'ecos';
-        		warning('Gurobi solver not found');
-        	end 
-        end 
-        if strcmp(settings.solver, 'ecos')
-        	if ~has_ecos
-        		settings.solver = 'sedumi';
-        		warning('ECOS solver not found');
-        	end 
-        end 
-        if strcmp(settings.solver, 'sedumi')
-        	if ~has_sedumi
-        		error('No valid solvers found in path');
-        	end 
-        end 
-
+        settings = validate_settings(settings); 
         obj.settings = settings; 
 
-
-        % TODO - validation on motor/gear set 
-  
-
-
-      
         % INITIALIZE OTHER THINGS?
 
         %{
@@ -205,8 +161,7 @@ methods (Access = public)
         %            'motor_table', 'gear_table'); 
 
         % TODO -- incorporate these in toolbox packaging somehow
-        load('database/test_vals.mat',...
-                    'test_motor', 'test_gearbox');
+        [test_motor, test_gearbox] = test_motor_gearbox();
         obj.test_motor = test_motor;
         obj.test_gearbox = test_gearbox; 
 
@@ -223,7 +178,10 @@ methods (Access = public)
         %load('/home/erez/Documents/MotorSelection/database/test_vals.mat',...
         %            'test_motor', 'test_gearbox'); 
 
-        obj.database = 
+        % NOTE: might want to look for saved file that has a database object 
+        % stored away and ONLY if we cant find one, instantiate a new one
+        % the reason to do this is that reading in all the csvs can be slow 
+        obj.mg_database = mgdb(); 
 
 
 
@@ -236,18 +194,26 @@ methods (Access = public)
     % Method: update_problem
     % 
     % Inputs: 
-    		% NOTE: maybe rename 
+    %       problem_data, a struct with the following
+    %       
+    %       Required Fields: 
+    %
+    %       Optional Fields:
     %
     %   Added:   
     %**********************************************************************
-    function update_problem(obj, problem_data, varargin)
+    function update_problem(obj, problem_data)
+    %
+    %   
     %
     %
     %
     %
     %
-    %
-    %
+
+        %problem_data = obj.validate_problem_data(problem_data);
+
+
         assert(isfield(problem_data, 'omega'), 'Missing omega');
         assert(isfield(problem_data, 'Q'), 'Missing Q');
         assert(isfield(problem_data, 'c'), 'Missing c');
@@ -356,22 +322,14 @@ methods (Access = public)
         end 
 
 
-        
         % when f_j is encoding linear inequality -- its more  
         % efficient to explicitly encode these as linear constrainrts
         % intead of SOC constraints with empty matrices 
-
         % We will convert Q to vectors containing the diagonal 
-        % Do we want to change it in the input???????
-        % NOTE: whats easier for the user 
-
-
-
         Q_empty = zeros(n, 1);  % the diagonal 
         M_empty = sparse(w, w); 
         c_empty = zeros(n, 1);    
         r_empty = zeros(w, 1);   
-
         lin_ineq = zeros(m, 1);   % Indicator (1 = linear)
 
         % Letting c,r,beta be fixed instead of function handles can 
@@ -432,7 +390,11 @@ methods (Access = public)
 
             % Convert All Qs to vectors of diagonal - more efficient 
             if size(Qj, 2) > 1 % if not col vector 
-            	Qj = full(diag(Q{j}(test_motor, test_gearbox)));
+                % We should either force the user to specify as a dense 
+                % col vector specifying diagonal or at least issue a warning
+                warning(['Specifying Q as a matrix instead of a vector ',...
+                                    'containing the diagonal can be slow']); 
+            	Qj = full(diag(Q{j}(test_motor, test_gearbox)));  % This is very slow 
             	% Now always returns a vcetor 
             	% NOTE: may note need "FULL"
             	Q{j} = @(motor, gearbox) full(diag(Q{j}(motor, gearbox)));
@@ -446,6 +408,7 @@ methods (Access = public)
                 lin_ineq(j - 1) = 1; 
             end
 
+            % TODO -- replace with simpler verion that skips eigen decomp 
             if nnz(Mj) > 0
                 [row, col, val] = find(Mj)
                 %unique_col = unique(col); 
@@ -484,9 +447,10 @@ methods (Access = public)
             end 
         end 
 
-
         %
-        %	Validating inputs for linear fractional problems 
+        %
+        %	      Validating inputs for linear fractional problems 
+        %
         %
         if (isfield(problem_data, 'cost_ub') && ~isempty(problem_data.cost_ub)) ||...
            (isfield(problem_data, 'cost_lb') && ~isempty(problem_data.cost_lb)) ||...
@@ -588,6 +552,8 @@ methods (Access = public)
             obj.beta_den = problem_data.beta_den; 
         end 
 
+
+
     end     
 
 
@@ -612,275 +578,61 @@ methods (Access = public)
     %               use inf to return all solutions however this will take
     %               much longer 
     %
+    %   Output: sol_structs - struct array of solution with fields TODO 
+    %
     %
     %   The problem type is assumed from the setup (standard or fractional)
     %
-    	start_tic = tic; 
+
         if isempty(varargin) || isempty(varargin{1})
             num_return = 1;
         else 
             num_return = varargin{1};
         end 
 
-        % NOTE these operations might be slow 
-        motors = table2struct(obj.motors);
-        gearboxes = table2struct(obj.gearboxes);
+        %
+        %       Get Valud Motor/Gearbox Combinations 
+        %
+        %
+        %   TODO filter me 
+        %   TODO filter me 
+        %   TODO filter me 
+        %
+        obj.mg_database.update_filter('omega_max', max(abs(obj.omega))); 
+
+        [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
+        % Convert from database map keys to structs 
+        for i = 1:length(motor_keys)  % slightly faster than cell fun
+            motors(i) = obj.mg_database.motors(motor_keys{i});
+            gearboxes(i) = obj.mg_database.gearboxes(gearbox_keys{i});
+        end 
     
-        % Get combinations from filtered list 
-        init_combos = obj.get_combinations(); 
-        filtered_combos = obj.velocity_filter(init_combos); 
-        combos = obj.apply_rankings(filtered_combos); 
-
-
-
-        disp_txt = []; 
-
-    
+        %
+        %       
+        %          Call the Optimizer for the Given Problem Type  
+        %
+        %
         if strcmp(obj.problem_type, 'standard')  
-
-            num_combinations = size(combos, 1); % TODO - combine with above? 
-            cost_list = nan(num_combinations, 1); 
-            cutoff = inf; % no valid solutions yet 
-            mincost = inf; % NOTE: not same as cutoff if want to hold on to multiple sols 
-            best_combo_idx = 0; % no valid solutions yet 
-
-            % runs the outer loop of the optimization 
-            num_return = min(num_combinations, num_return); % cant return more than num options 
-
-
-
-            table_line = [repmat('-', 1, 80), '\n']; 
-            obj.vprintf(1, table_line);
-
-
-            header_r1 = [" Combo x  |",  " Repeated |", " Mixed Int |",...
-                              "     |",  "   |", "     "];
-            combo_frac_txt = sprintf(' of %d |', num_combinations);
-            header_r2 = [combo_frac_txt, "  Solves |", " Solves |",...
-                              "  Cutoff  |", "Best Cost |", "   Time  "];
-
-            header_txt1 = sprintf('%+14s%+12s%+12s%+13s%+13s%+11s\n', header_r1);
-            header_txt2 = sprintf('%+14s%+12s%+12s%+13s%+13s%+11s\n', header_r2);
-            obj.vprintf(1, header_txt1);
-            obj.vprintf(1, header_txt2);
-            obj.vprintf(1, table_line);
-
-            
-            % cutoff corresponds to max value of solutions being kept 
-            % use a priority queue 
-            pq = PQ(true); % 
-
-            num_rep_solves = 0;     % repeated SOCP solves 
-            num_mi_solves = 0;      % MISOCP solves 
-
-            for j = 1:num_combinations 
-                
-                motor = motors(combos(j, 1));
-                gearbox = gearboxes(combos(j, 2)); 
-
-                [combo_cost, tmp_sol, comp_time, exitflag] = obj.combo_solve(motor,...
-                                             gearbox, cutoff); 
-                if exitflag > 0; num_rep_solves = num_rep_solves + 1; end 
-                if exitflag > 1; num_mi_solves  = num_mi_solves + 1;  end 
-
-                % may keep a seperate pseud-cost list for updating rankings 
-                if ~isinf(combo_cost)
-                    cost_list(j) = combo_cost;
-
-                    if combo_cost < cutoff
-
-                        % define struct to insert into the pq
-                        sol_struct.cost = combo_cost; 
-                        sol_struct.sol = tmp_sol;
-                        sol_struct.motor = motor; 
-                        sol_struct.gearbox = gearbox; 
-
-                        pq.insert(combo_cost, sol_struct); 
-                        if pq.size() > num_return  % if inserting put us over limit 
-                            pq.pop(); % remove max element from pq 
-                            % then update the cutoff      
-                            [cutoff, ~] = pq.peek(); % update the cutoff 
-                        end 
-
-                        % For the actual minimum cost 
-                        if  combo_cost < mincost
-                            mincost = combo_cost; 
-                        end 
-                    end 
-                else
-                    % Think on this more 
-                    % could be better to keep track of some mone 
-                    % Longer computation time typically more iterations
-                    % to reach dual cutoff. This acts as a pseudocost for 
-                    % combinations where we havent computed the full
-                    % solution but havent proven infeasibility either
-                    cost_list(j) = cutoff + (1/comp_time); 
-                end 
-
-
-                %
-                %                   Print Outs to screen 
-                %
-                if  (j == 2) || (j == num_combinations) || ...
-                    ((mod(j - 1, obj.settings.print_freq) == 0) && j > 1)
-                    % Print a new line 
-                    obj.vprintf(1, '\n'); 
-                else 
-                    % update the current line (by first removing)
-                    obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-                end 
-                disp_txt = sprintf('%13d%12d%12d%s%s%11.2f',...
-                        j, num_rep_solves, num_mi_solves,...
-                        sciprint(cutoff,'13.3'), sciprint(mincost, '13.3'),...
-                                     toc(start_tic)); 
-                obj.vprintf(1, disp_txt); 
-            end 
-
-            num_sols = pq.size(); % may not have found num_return feas sols 
-            for i = num_sols:-1:1
-                [~, sol_struct] = pq.pop(); 
-                sol_structs(i) = sol_struct;
-            end 
-
-            % Returns cost_list and sol_structs 
+            [sol_structs, cost_list, mincost, exitflag] = ...
+                        obj.optimize_standard(motors, gearboxes, num_return);
         elseif strcmp(obj.problem_type, 'fractional')
-            [sol_structs, cost_list, mincost] = obj.optimize_fractional(num_return, combos); 
+            [sol_structs, cost_list, mincost, exitflag] = ...
+                     obj.optimize_fractional(motors, gearboxes, num_return); 
         else 
             error('Invalid problem type. Must be "standard" or "fractional" '); 
         end 
 
-        obj.update_rankings(cost_list, combos); 
-
-        % debug this 
         if isinf(mincost)       
             sol_structs = struct(); % empty 
             warning('No feasible solutions found');
         end 
-    end 
 
+        % Update the rankings using the cost list to speed up the next solve 
 
+        obj.mg_database.update_rankings(motor_keys, gearbox_keys, cost_list);
 
-    % MOTOR TABLE -- EACH MOTOR HAS A LIST OF COMPATIBLE GB 
-    % ADDING TO TABLES WILL REQUIRE UPDATES WHICH IS SLOW 
-    % BUT FINE BECAUSE DOESNT NEED TO BE DONE OFTEN 
-    % CAN ALSO BATCH ADD OR MAYBE INCLUDE ADDITIONAL
-    % CSV FILES? BATCH ADD -- DONT UPDATE THE REFERENCES UNTIL AFTER 
-    % ADDING ALL THE THINGS 
-    % MAY NEED TO STORE A COMPATIBILTY MATRIX SOMWHERE OR SOMETHING LIKE THAT 
+    end % end optimize 
 
- 
-    function [combo_list] = get_combinations(obj)
-    %**********************************************************************
-    % Method: get_combinations 
-    % 
-    % Inputs: 
-    %       None
-    %
-    % Outputs:
-    %       N x 2 array where N is the number of combinatioms. First col 
-    %       gives index of motor in motor table
-    %       and second col gives the index of the gearbox. For direct 
-    %       drive (no gearbox) a 0 is used in the second column as a flag
-    %       for no gearbox 
-    %
-    %   Added:   
-    %**********************************************************************    
-
-        % NOTE if there are filter criteria like motor velocity 
-        % that needs to be included here because function of both 
-        % motor max speed AND gear ratio
-
-        %if obj.settings.verbose; fprintf('\nGetting combinations...'); end 
-
-
-        % Loop through motors (NOTE: list will typically be filtered before)
-        num_motors = size(obj.motors, 1);
-        combo_list = {}; % start as cell because dont know how big it needs to be 
-        for i = 1:num_motors 
-            motor_idx = i; % For now --- later -- use filtered idxs 
-            % indices in gear table 
-            compatible_gears = cell2mat(obj.motors.('gearboxes')(motor_idx)); 
-            for j = 1:numel(compatible_gears)
-                % TODO: if 'filtered' this combo may be excluded 
-                gear_idx = compatible_gears(j); 
-                combo_list{end + 1, 1} = [motor_idx, gear_idx]; 
-            end 
-        end 
-        % convert cell to N x 2 array 
-        combo_list = cell2mat(combo_list); 
-
-        %combo_list = combo_list(1:min(length(combo_list), 400), :); 
-        %warning('remember to comment this debug thing out limiting combos to 200')
-    
-
-    end 
-    
-
-
-
-    function new_combos = velocity_filter(obj, combos)
-    %
-    %
-    %
-        motors = table2struct(obj.motors);
-        gears = table2struct(obj.gearboxes);
-
-        num_init_combos = size(combos, 1); 
-        obj.vprintf(1, 'Found %d initial feasible combinations\n', num_init_combos);
-
-        % Starting at end of combo list and remove based on velocty 
-        max_output_vel = max(abs(obj.omega)); 
-
-        for j = length(combos):-1:1
-            motor_idx = combos(j, 1); 
-            gear_idx = combos(j, 2); 
-
-            max_motor_vel = max_output_vel * gears(gear_idx).alpha;  
-            if max_motor_vel > motors(motor_idx).omega_max
-                combos(j, :) = []; % clear it out 
-            end 
-        end 
-        new_combos = combos; 
-
-
-        num_updated_combos = size(combos, 1); 
-        obj.vprintf(1, 'Filtering by max velocity removed: %d combinations\n',...
-                            num_init_combos - num_updated_combos);
-    end 
-
-
-
-
-
-    function update_rankings(obj, cost_list, combos)
-    %
-    %
-    %
-
-        % May be called by user so add validation
-        cost_list = cost_list(:); 
-
-        assert(size(combos, 1) == length(cost_list),...
-                 'Number of combinations must match length of costs');
-        assert(size(combos, 2) == 2, 'Combinations must be 2xN matrix'); 
-
-        [~, rank_idxs] = sort(cost_list);   % Need to index this back in 
-        tmp_table = [cost_list, combos];
-        obj.rankings = tmp_table(rank_idxs, :); 
-
-        % row - motor idx, col - gear idx, val = ranking - 0 is flag for inf 
-        ranking_matrix = sparse(combos(:, 1), combos(:, 2), cost_list,...
-                                     obj.num_motors, obj.num_gearboxes); 
-        obj.ranking_matrix = ranking_matrix; 
-    end 
-
-    % NOTE: some plotting methods could be good 
-    % Selection Filtering?
-    % Private methods? 
-
-    % Function to CLEAR FILTERS on motor/gb -- go back to original 
-    % ...this would probably clear any motor/gb that was manually added
-    % no great way around this 
 
 end % end public methods 
 
@@ -896,261 +648,402 @@ end % end public methods
 %
 
 
+    % NOTE: some plotting methods could be good 
+    % Selection Filtering?
+    % Private methods? 
+
+    % Function to CLEAR FILTERS on motor/gb -- go back to original 
+    % ...this would probably clear any motor/gb that was manually added
+    % no great way around this 
+
 methods (Access = private)
 
-    function ranked_combos = apply_rankings(obj, combos)
-    %
-    %
-    %
-    
-        % if no rankings, just return
-        if nnz(obj.ranking_matrix) == 0
-            ranked_combos = combos;
-            return;
-        end 
+    %function validate_problem_data(obj, problem_data)
+    %end % end validate problem data 
 
-        ranked_combos = zeros(size(combos) + [0, 1]);  % extra col 
-        num_combos = size(combos, 1);
-        % O(n) -- get all the rankings  
-        for j = 1:num_combos
-            motor_idx = combos(j, 1);
-            gear_idx = combos(j, 2);  
-            ranking = obj.ranking_matrix(motor_idx, gear_idx); 
-            ranked_combos(j, :) = [ranking, motor_idx, gear_idx]; 
-        end 
-        % O(nlogn) -- sort by the rankings 
-        [~, sort_idxs] = sort(ranked_combos(:, 1)); 
-        ranked_combos = ranked_combos(sort_idxs, :); 
-    end 
-
-
+   
 
     function [combo_cost, sol, solve_time, exitflag] = combo_solve(obj,...
                                                         motor, gearbox,...
                                                                 bound)
-
-
-        % TODO -- add more output info for repeated solves OR MIQP solves 
+    %
+    %
+    %
+    %
+    %
+    %
+    %
 
     	start_tic = tic; 		% to get timing 
     	[matrices, comp_torques, cutoff, index_map] = ...
                                      obj.build_matrices(motor, gearbox, bound); 
 
-        % Move to subfunction 
-
-        % Inputs: Matrices 
-
-        % Outputs: y_sol, combo_cost, some flags
         [y_sol, combo_cost] = obj.socp_solve(matrices, cutoff);
-
-        % instead if bad_idxs -- return which way to force the problem 
-        [sol, bad_idxs, directions, tau_error] = parse_solution(obj, y_sol, index_map,...
-                                                comp_torques,  motor, gearbox); 
-
+        [sol, bad_idxs, directions, tau_error] = obj.parse_solution(y_sol,...
+                                     index_map, comp_torques,  motor, gearbox); 
         exitflag = 0; % no issues with solve 
 
-
-
-
-
+        % If mu/gamma decomposition inccorect at some indices, try to fix it 
         if ~isempty(bad_idxs)  % need to run next solve 
+            [sol, combo_cost, exitflag] = fix_gm_mu_errors(obj, combo_cost,...
+                                    cutoff, bad_idxs, directions, index_map,...
+                                        matrices, comp_torques, motor, gearbox);
+        end 
+        solve_time = toc(start_tic);
+    end 
 
-            if ~isfield(index_map, 'del')
-                disp('how the hell....')
-                keyboard
+
+
+        % Inputs: combo_cost (initial) directions, bad_idxs, index_map, matrices
+        %                                         motor, gearbox(for parsing sol)
+        % Outputs: sol, combo_cost, exitflag,  
+
+    function [sol, combo_cost, exitflag] = fix_gm_mu_errors(obj, init_cost,...
+                                       cutoff, bad_idxs, directions, index_map,...
+                                         matrices, comp_torques, motor, gearbox)
+    %
+    %
+    %   Inputs:
+    %       init_cost - cost of original solution without fixing any if the bin cals 
+    %
+        exitflag = 1; % repeated solve -- will get set higher if fails 
+
+        % Augment the matrices 
+        dim_y = length(matrices.ub);
+        nbi = length(bad_idxs); % nbi = number of bad indices 
+        [~, shifted_idxs] = intersect(index_map.binary, bad_idxs, 'stable');
+        A_del_aug = sparse(1:nbi, index_map.del(shifted_idxs), ones(nbi, 1),...
+                            nbi, dim_y); 
+        b_del_aug = directions; 
+
+        matrices_bin_aug = matrices;    % a copy for augmenting 
+        matrices_bin_aug.A_eq = [matrices.A_eq; A_del_aug];
+        matrices_bin_aug.b_eq = [matrices.b_eq; b_del_aug];
+
+        % NOTE: calling without cuttoffs here - if use cutoff and get 
+        % nan result its possible that its feasbile just over the cutoff
+        % NOTE: if treating our cutoffs as real though maybe still want a cutoff ohere 
+        % think on this more
+
+        % Try fixing the directions to the assumed directions 
+        [y_sol_new, combo_cost_new] = obj.socp_solve(matrices_bin_aug, inf);
+        [sol_new, bad_idxs_new, directions_new, tau_error_new] = ...
+                                parse_solution(obj, y_sol_new, index_map,...
+                                             comp_torques,  motor, gearbox); 
+
+        % 
+        %   If cost for fixed version is too different than cost 
+        %   for non-fixed version -- call the mixed int solver 
+        % 
+        cost_diff = combo_cost_new - init_cost; 
+        cost_diff_rel = cost_diff/min(abs(init_cost), abs(combo_cost_new));
+
+        % If trying to fix directions failed (inf cost) OR cost was sufficiently
+        % different from the initial cost (meaning that this feasible solution
+        % might not be close enough to optimal for the mixed integer problem)
+        if ((cost_diff_rel > obj.settings.reltol) && ...
+            (cost_diff > obj.settings.abstol)) ||  ~isempty(bad_idxs_new)
+
+            % Infeasiblity search 
+            % inputs: matrices, cutoff, bad_idxs, index_map, matrices
+            %                  comp_torques, motor, gearbox
+            % Outputs: sol, combo_cost, skip_mi_flag, 
+            % Potentially -- LP infeasibilty search first
+
+            % Combine the initial and the new 
+            bad_idxs_comb = [bad_idxs; bad_idxs_new]; 
+
+
+            %%% First try to prove infeasibility by only solving LPs
+            % Sometimes this leads to slightly faster overall solve time  
+            lp_matrices = matrices; 
+            lp_matrices.Q_cost = sparse(dim_y, dim_y);
+            lp_matrices.quadcon = struct([]); 
+            [sol, combo_cost, skip_mi_flag] = obj.infeasible_gmmu_search(cutoff,....
+                            bad_idxs_comb, index_map, lp_matrices, comp_torques,...
+                                                            motor, gearbox);
+
+            if ~skip_mi_flag % was NOT able to prove infeasibility with LPs 
+                [sol, combo_cost, skip_mi_flag] = obj.infeasible_gmmu_search(cutoff,....
+                            bad_idxs_comb, index_map, matrices, comp_torques,...
+                                                            motor, gearbox);
+                disp('..NO HELP')
+            else
+                disp('.....smart man....')
             end 
 
-            exitflag = 1; % repeated solve 
+            % Remove Fixed Augmentation from binary 
+            if ~skip_mi_flag
 
-            % Try fixing the drive/driven direction for the bad idxs 
-            matrices_debug = matrices; % TODO - remove 
+                bin_indicator = false(length(matrices.ub), 1);
+                bin_indicator(index_map.del) = true;   % these values need to be solve binary 
+                matrices.binary = bin_indicator;    % tell it to solve mixed int
 
-            % Augment the matrices 
-            nbi = length(bad_idxs); 
-            dim_y = length(matrices.ub);
-            [~, shifted_idxs] = intersect(index_map.binary, bad_idxs, 'stable');
-            A_del_aug = sparse(1:nbi, index_map.del(shifted_idxs), ones(nbi, 1),...
-                                        nbi, dim_y); 
+                disp('cost too diff call mixed into....')
 
-            b_del_aug = directions; 
-
-            A_eq_init = matrices.A_eq;
-            b_eq_init = matrices.b_eq; 
-
-            matrices.A_eq = [A_eq_init; A_del_aug];
-            matrices.b_eq = [b_eq_init; b_del_aug];
-
-            % NOTE: calling without cuttoffs here - if use cutoff and get 
-            % nan result its possible that its feasbile just over the cutoff
-            % NOTE: if treating our cutoffs as real though maybe still want a cutoff ohere 
-            % think on this more
-
-            disp('resolve...........................')
-
-            [y_sol_new, combo_cost_new] = obj.socp_solve(matrices, inf);
-
-            [sol_new, bad_idxs_new, directions_new, tau_error_new] = parse_solution(obj,...
-                                                 y_sol_new, index_map,...
-                                                comp_torques,  motor, gearbox); 
-
-            % 
-            %   If cost for fixed version is too different than cost 
-            %   for non-fixed version -- call the mixed int solver 
-            % 
-
-            % ideally this criteria is pretty loose while still being rigorous 
-
-            % would be always > 0 except for the rho augmentation  
-            cost_diff = combo_cost_new - combo_cost; 
-            cost_diff_rel = cost_diff/min(abs(combo_cost), abs(combo_cost_new));
-
-            % Will still fail sometimes on 
-            
-
-            if ((cost_diff_rel > obj.settings.reltol) && ...
-                (cost_diff > obj.settings.abstol)) ||  ~isempty(bad_idxs_new)
-
-
-        %       If still NOT good -- call mixed integer solver
-        %           -- however, may want to save this problem for layer 
-        %       -- ALSO definitely feed information back to caller 
-        %       in logging want to know how many problem required multiple solves
-        %       and how many required mixed integer solvers
-        %
-                gm_init = y_sol(index_map.gm); 
-                mu_init = y_sol(index_map.mu); 
-                del_init = y_sol(index_map.del);
-                I_init = y_sol(index_map.I);
-                I_shift_init = I_init - comp_torques.I_comp;
-                Isq_init = y_sol(index_map.Isq);
-
-                gm_new = y_sol_new(index_map.gm);  
-                mu_new = y_sol_new(index_map.mu); 
-                del_new = y_sol_new(index_map.del); 
-                I_new = y_sol_new(index_map.I); 
-                I_shift_new = I_new - comp_torques.I_comp; 
-
-                init_bad_vals = min(abs(gm_init(bad_idxs)), abs(mu_init(bad_idxs)));
-
-
-
-                % Try to prove infeasible or cutoff before defaulting to mized int 
-                bad_idxs_comb = [bad_idxs; bad_idxs_new];
-                [~, shifted_idxs_comb] = intersect(index_map.binary, bad_idxs_comb, 'stable');
-                nbi = length(bad_idxs_comb);
-
-
-                skip_mi_flag = false; % will set to true if we prove infeasible 
-                A_del_aug = sparse([], [], [], nbi, dim_y, nbi); % initialize to empty -- no fixed vals yet
-                b_del_aug = zeros(nbi, 1);  % no fixed vals yet
-                for i = 1:length(bad_idxs_comb)
-                    zero_infeas = false;
-                    one_infeas = false; 
-
-                    del_idx = index_map.del(shifted_idxs_comb(i)); 
-                    A_del_aug(i, del_idx) = 1; % redundant but more clear to read 
-                    matrices.A_eq = [A_eq_init; A_del_aug];
-
-
-                    % Try fixing it at zero
-                    b_del_aug(i) = 0;
-                    matrices.b_eq = [b_eq_init; b_del_aug];
-                    [y_sol_zero, combo_cost_zero] = obj.socp_solve(matrices, cutoff);
-                    if isinf(combo_cost_zero)
-                        zero_infeas = true;     % this value cannot be zero 
-                    end 
-
-                    % Try fixing it at one 
-                    b_del_aug(i) = 1; 
-                    matrices.b_eq = [b_eq_init; b_del_aug];
-                    [y_sol_one, combo_cost_one] = obj.socp_solve(matrices, cutoff);
-                    if isinf(combo_cost_one)
-                        one_infeas = true;
-                    end 
-
-                    if zero_infeas && one_infeas     % we've proven infeasibility 
-                        combo_cost = inf; 
-                        skip_mi_flag = true; 
-                        sol = struct(); 
-                        disp('infeasibility proven')
-                        break; 
-                    elseif zero_infeas
-                        b_del_aug(i) = 1; % cant be zero  (REDUNDANT BUT READABLE )
-                    elseif one_infeas
-                        b_del_aug(i) = 0;   % cant be one 
-                    else    % both feasible 
-                        b_del_aug(i) = 0; 
-                        A_del_aug(i, del_idx) = 0; % we cant definitively fix this value
-                    end 
-                end 
-
-
-                % Remove Fixed Augmentation from binary 
-                %matrices.A_eq = A_eq_init;
-                %matrices.b_eq = b_eq_init;
-                if ~skip_mi_flag
-
-                    if nnz(A_del_aug) == nbi  % for each index there is only one direction it can be fixed 
-                    % this -- would imply that the problem is feasibly UNLESS -
-                    % fixing these indices may have caused other indices to go haywire 
-                        disp('yo')
-                        keyboard
-                    end 
-
-
-                    bin_indicator = false(dim_y, 1);
-                    bin_indicator(index_map.del) = true;   % these values need to be solve binary 
-                    matrices.binary = bin_indicator;    % tell it to solve mixed int
-
-                    disp('cost too diff call mixed into....')
-
-
-                    [y_sol_mi, combo_cost_mi] = obj.socp_solve(matrices, cutoff);
-
-
-
-                    %... For the mixed integer sol -- want to use cutoffs 
-                    %
-                    %   really just need to force delta values to binary 
-                    % ... do we REALLY want to write a seperate B&B module??
-                    % could always use the ECOS one but its pretty bad
-                    keyboard 
-                end 
-                %[y_sol_mi, combo_cost_mi] = obj.misocp_solve(matrices, cutoff);
+                % as a NOTE, sometimes the presolve for these on mixed int 
+                % completely does the trick 
+                % perhaps these are even LP presolve tricks 
+                % if so, if we can write our own presolver, we could 
+                % FIRST check a feasibility presolve 
+                % intesting to check if actially is just LP presolve 
+                % because presolve is frickin fast 
                 %
+                % 
 
-                %[sol_new, bad_idxs_new, directions_new, tau_error_new] = parse_solution(obj,...
-                %                                 y_sol_mi, index_map,...
-                %                                comp_torques,  motor, gearbox); 
+                [y_sol_mi, combo_cost_mi] = obj.socp_solve(matrices, cutoff);
 
 
-                
-                exitflag = 2; 
+
+                %... For the mixed integer sol -- want to use cutoffs 
+                %
+                %   really just need to force delta values to binary 
+                % ... do we REALLY want to write a seperate B&B module??
+                % could always use the ECOS one but its pretty bad
+                keyboard 
             end 
-
-            if cost_diff == 0
-
-                disp('how zero -- zero zero?????')
-
-                keyboard
-            end 
-
+  
+            
+            exitflag = 2; 
+        else % ie. the costs were close enough 
+            combo_cost = combo_cost_new; 
+            sol = sol_new; 
         end 
 
+        if cost_diff == 0
 
+            disp('how zero -- zero zero?????')
 
+            keyboard
+        end 
 
-
-        solve_time = toc(start_tic);
 
     end 
 
 
-    % function 
+    function [sol, combo_cost, skip_mi_flag] = ...
+                          infeasible_gmmu_search(obj, cutoff, bad_idxs,...
+                             index_map, matrices, comp_torques, motor, gearbox);
 
+        bad_idxs_init = bad_idxs;  
+        nbi_init = bad_idxs_init; 
+
+        bad_idxs_comb = unique([bad_idxs; index_map.binary], 'stable');
+        [~, shifted_idxs_comb] = ismember(bad_idxs_comb, index_map.binary); 
+
+
+        nbi = length(shifted_idxs_comb);            
+        skip_mi_flag = false; % will set to true if we prove infeasible 
+
+        A_del_aug = sparse([], [], [], nbi, length(matrices.ub), nbi); % initialize to empty -- no fixed vals yet
+        b_del_aug = zeros(nbi, 1);  % no fixed vals yet
+
+        del_aug_ub = ones(nbi, 1);      % upper bound for feasible assignments 
+        del_aug_lb = zeros(nbi, 1);     % lower bound for feasible assignments
+
+        % ADD AN LP Presolve to hopefully speed things up - will need to profile 
+        % -- would require sectioning this out even further
+        % maybe make a function "infeasibility search"
+
+        % if after these steps the upper and lower bound of feasible assignments
+        % is the same AND we we have not created any new bad idxs, then
+        % there exists only 1 feasible mixed integer solution and we do 
+        % not need to call the mixed integer solver
+        % TODO -- clean way of moving this out to function
+        % so can call again in the worst case 
+        A_eq_init = matrices.A_eq;
+        b_eq_init = matrices.b_eq;
+
+        for i = 1:nbi  % NOTE: combined bad idxs -- actually go through all of them 
+            zero_infeas = false;
+            one_infeas = false; 
+
+            del_idx = index_map.del(shifted_idxs_comb(i)); 
+            A_del_aug(i, del_idx) = 1; % redundant but more clear to read 
+            matrices.A_eq = [A_eq_init; A_del_aug];
+
+            %
+            %       Try fixing it at zero
+            %
+            b_del_aug(i) = 0;
+            matrices.b_eq = [b_eq_init; b_del_aug];
+            [y_sol_zero, combo_cost_zero] = obj.socp_solve(matrices, cutoff);
+            if isinf(combo_cost_zero)
+                zero_infeas = true;     % this value cannot be zero 
+                del_aug_lb(i) = 1; % must be 1 
+            else
+                y_sol_new = y_sol_zero;  % most recent feasible solve 
+                combo_cost_new = combo_cost_zero; 
+            end 
+                  
+            %
+            %        Try fixing it at one 
+            %
+            b_del_aug(i) = 1; 
+            matrices.b_eq = [b_eq_init; b_del_aug];
+            [y_sol_one, combo_cost_one] = obj.socp_solve(matrices, cutoff);
+            if isinf(combo_cost_one)
+                one_infeas = true;
+                del_aug_ub(i) = 0; % must be zero 
+            else 
+                y_sol_new = y_sol_one;  % most recent feasible solve 
+                combo_cost_new = combo_cost_one; 
+            end  
+
+            if zero_infeas && one_infeas     % we've proven infeasibility 
+                combo_cost = inf; 
+                skip_mi_flag = true; 
+                sol = struct(); 
+                break; 
+            elseif zero_infeas
+                b_del_aug(i) = 1; % cant be zero  (REDUNDANT BUT READABLE )
+            elseif one_infeas
+                b_del_aug(i) = 0;   % cant be one 
+            else    % both feasible 
+                b_del_aug(i) = 0; 
+                A_del_aug(i, del_idx) = 0; % we cant definitively fix this value
+
+                disp('wait a sec compare the costs ')
+                keyboard 
+
+            end 
+        end 
+
+        if ~any(del_aug_ub - del_aug_lb) % if bounds same - we have out sol
+            % if these are the same it means we made it all the way 
+            % through the bad idxs and only found 1 feasible solution
+            % if this new solution doesnt create any new bad idxs we are done 
+            [sol_new, bad_idxs_check, directions_check, tau_error_check] = ...
+                            parse_solution(obj, y_sol_new, index_map,...
+                                                comp_torques,  motor, gearbox);
+            sol = sol_new; 
+            combo_cost = combo_cost_new; 
+
+            if isempty(bad_idxs_check)  % solution is mixed-integer feasible 
+                skip_mi_flag = true; 
+            end 
+        elseif ~skip_mi_flag % We have not shown infeasible nor that only 1 sol exists 
+            sol = struct([]); 
+            combo_cost = nan;   
+            disp('boo')
+            keyboard
+        end  
+
+    end % end infeasible gmmu search 
 
     function [sol_structs, cost_list, mincost, exitflag] = ...
-                                    optimize_fractional(obj, num_return, combos)
+                           optimize_standard(obj, motors, gearboxes, num_return)
+
+        start_tic = tic; 
+
+        num_combinations = length(motors); 
+
+        cost_list = nan(num_combinations, 1); 
+        cutoff = inf; % no valid solutions yet 
+        mincost = inf; % NOTE: not same as cutoff if want to hold on to multiple sols 
+        best_combo_idx = 0; % no valid solutions yet 
+
+        % runs the outer loop of the optimization 
+        num_return = min(num_combinations, num_return); % cant return more than num options 
+
+
+        table_line = [repmat('-', 1, 80), '\n']; 
+        obj.vprintf(1, table_line);
+
+
+        header_r1 = [" Combo x  |",  " Repeated |", " Mixed Int |",...
+                          "     |",  "   |", "     "];
+        combo_frac_txt = sprintf(' of %d |', num_combinations);
+        header_r2 = [combo_frac_txt, "  Solves |", " Solves |",...
+                          "  Cutoff  |", "Best Cost |", "   Time  "];
+
+        header_txt1 = sprintf('%+14s%+12s%+12s%+13s%+13s%+11s\n', header_r1);
+        header_txt2 = sprintf('%+14s%+12s%+12s%+13s%+13s%+11s\n', header_r2);
+        obj.vprintf(1, header_txt1);
+        obj.vprintf(1, header_txt2);
+        obj.vprintf(1, table_line);
+
+        
+        % cutoff corresponds to max value of solutions being kept 
+        % use a priority queue 
+        pq = PQ(true); % 
+
+        num_rep_solves = 0;     % repeated SOCP solves 
+        num_mi_solves = 0;      % MISOCP solves 
+        disp_txt = [];      % for print outs
+
+        for j = 1:num_combinations 
+            motor = motors(j);
+            gearbox = gearboxes(j); 
+
+            [combo_cost, tmp_sol, comp_time, exitflag] = obj.combo_solve(motor,...
+                                         gearbox, cutoff); 
+            if exitflag > 0; num_rep_solves = num_rep_solves + 1; end 
+            if exitflag > 1; num_mi_solves  = num_mi_solves + 1;  end 
+
+            % may keep a seperate pseud-cost list for updating rankings 
+            if ~isinf(combo_cost)
+                cost_list(j) = combo_cost;
+
+                if combo_cost < cutoff
+
+                    % define struct to insert into the pq
+                    sol_struct.cost = combo_cost; 
+                    sol_struct.sol = tmp_sol;
+                    sol_struct.motor = motor; 
+                    sol_struct.gearbox = gearbox; 
+
+                    pq.insert(combo_cost, sol_struct); 
+                    if pq.size() > num_return  % if inserting put us over limit 
+                        pq.pop(); % remove max element from pq 
+                        % then update the cutoff      
+                        [cutoff, ~] = pq.peek(); % update the cutoff 
+                    end 
+
+                    % For the actual minimum cost 
+                    if  combo_cost < mincost
+                        mincost = combo_cost; 
+                    end 
+                end 
+            else
+                % Think on this more 
+                % could be better to keep track of some mone 
+                % Longer computation time typically more iterations
+                % to reach dual cutoff. This acts as a pseudocost for 
+                % combinations where we havent computed the full
+                % solution but havent proven infeasibility either
+                cost_list(j) = cutoff + (1/comp_time); 
+            end 
+
+            %
+            %                   Print Outs to screen 
+            %
+            if  (j == 2) || (j == num_combinations) || ...
+                ((mod(j - 1, obj.settings.print_freq) == 0) && j > 1)
+                % Print a new line 
+                obj.vprintf(1, '\n'); 
+            else 
+                % update the current line (by first removing)
+                obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
+            end 
+            disp_txt = sprintf('%13d%12d%12d%s%s%11.2f',...
+                    j, num_rep_solves, num_mi_solves,...
+                    sciprint(cutoff,'13.3'), sciprint(mincost, '13.3'),...
+                                 toc(start_tic)); 
+            obj.vprintf(1, disp_txt); 
+        end 
+
+        num_sols = pq.size(); % may not have found num_return feas sols 
+
+        for ii = num_sols:-1:1
+            [~, sol_struct] = pq.pop(); 
+            sol_structs(ii) = sol_struct;
+        end 
+
+    end % end optimize standard 
+
+    function [sol_structs, cost_list, mincost, exitflag] = ...
+                        optimize_fractional(obj, motors, gearboxes, num_return)
     %
     %
     %
@@ -1164,12 +1057,16 @@ methods (Access = private)
         % individual lower and upper bounds change 
         % would need some logging 
 
+        %{
+        motors = table2struct(obj.motors);
+        gearboxes = table2struct(obj.gearboxes);
+        %}
+
         start_tic = tic; 
 
         assert(num_return >= 1, 'num_return must be positive int');
 
-        motors = table2struct(obj.motors);
-        gearboxes = table2struct(obj.gearboxes);
+
         mincost = inf; % no feasible solution yet 
 
         global_ub = obj.cost_ub;   % global upper bound for solution POOL 
@@ -1439,6 +1336,8 @@ methods (Access = private)
         %
         %
 
+
+
         % How we actually "solve" will depend on solver
         % Gurobi OR Sedumi OR ECOS 
         % 
@@ -1446,21 +1345,24 @@ methods (Access = private)
         omega = obj.omega; 
         omega_dot = obj.omega_dot; % may be all zeros 
 
-        eta = gearbox.eta; 
-        alph = gearbox.alpha; 
+        eta = gearbox.efficiency; 
+        ratio = gearbox.ratio; 
         k_t = motor.k_t; 
 
         H = obj.H(motor, gearbox);
         b = obj.b(motor, gearbox);
         H_ineq = obj.H_ineq(motor, gearbox);
-        b_ineq = obj.b_ineq(motor, gearbox);
+        b_ineq = obj.b_ineq(motor, gearbox); 
+         % TODO -- remove confusion between A/b in solving socp and H/b in problem setuo
+         % probablyt keep A/b and rename the 'b' in the problem setup context 
 
 
         T = obj.T(motor, gearbox);
         d = obj.d(motor, gearbox); 
 
-        tau_gearbox_inertia = gearbox.inertia * (alph^2) * omega_dot;  % multiply ny ratio to add to output 
+        tau_gearbox_inertia = gearbox.inertia * (ratio^2) * omega_dot;  % multiply ny ratio to add to output 
         
+
         I_u = obj.I_u(motor, gearbox);  % symmetric bounds, dont need I_l
         I_l = -I_u; 
 
@@ -1478,21 +1380,29 @@ methods (Access = private)
         so = round(sign_omega + 0.1); 	% = 1 if omega = 0  
 
         %
-        % 		Friction and Inertia 
+        % 		Friction/Drag and Inertia Compensation
         %
 
         % TODO -- whats the best general way to handle static friction
         % Should there be a call to a function which determines 
         % friction model based of settings? 
-        tau_friction_static = 1.1 * k_t * motor.I_nl;  % scalar 
+        
+
+
         % tau_motor_friction is JUST kinetic 
-        tau_motor_friction = k_t * motor.I_nl * sign_omega; % NOTE: Incorp other friction models 
-      
-        % Since BEFORE gearbox only multiplied by alpha NOT alpha^2 
-        % will effectively get multiplied by alpha again through gearbox
-        tau_motor_inertia = motor.inertia * alph * omega_dot; 
+        [tau_motor_friction, tau_static_friction] = obj.friction_model(motor, gearbox); 
+
+
+        % Since BEFORE gearbox only multiplied by ratio NOT ratio^2 
+        % will effectively get multiplied by ratio again through gearbox
+        tau_motor_inertia = motor.inertia * ratio * omega_dot; 
         
   		% Dynamic Motor Friction and Inertia Compensation  (f - fric, j- inerits )
+        % TODO -- rename this guy and move into frictino model function
+        % and have it be returned by that 
+
+
+
         tau_mfj = tau_motor_friction + tau_motor_inertia; 
         I_comp = tau_mfj/k_t; % corresponding current 
 
@@ -1513,7 +1423,7 @@ methods (Access = private)
 
         index_map.I = I_idxs; 
         index_map.Isq = Isq_idxs; 
-        index_map.tau = tau_idxs;       % where tau = Tx + d AND Tau + tau_gb_inertia = alph*kt(eta*gamma + mu/eta)
+        index_map.tau = tau_idxs;       % where tau = Tx + d AND Tau + tau_gb_inertia = ratio*kt(eta*gamma + mu/eta)
         index_map.x = x_idxs;
         index_map.zv_idxs = zv_idxs;
 
@@ -1536,16 +1446,20 @@ methods (Access = private)
         		% TODO -- ONLY ADD WHERE NEEDED TO REDUCE PROBLEM
         		% SIZE AND REDUNDANT CONSTRAINTS 
 
+
+
                 binary_aug = true;  % Add more variables 
                 aug_idxs = find(Ico < 0); % indices where we need the extra help 
                 num_aug = length(aug_idxs);
 
+                if num_aug == 0
+                    disp('how the f')
+                    keyboard
+                end 
+
+
                 index_map.binary = aug_idxs; % NOTE: unlike everything else NOT an index into sol vector
 
-        		%del_idxs = s_idxs(end) + (1:n); 
-            	%sig_idxs = del_idxs(end) + (1:n); 
-            	%gmsq_idxs = sig_idxs(end) + (1:n);
-            	%musq_idxs = gmsq_idxs(end) + (1:n);
                 del_idxs = s_idxs(end) + (1:num_aug); 
                 sig_idxs = del_idxs(end) + (1:num_aug); 
                 gmsq_idxs = sig_idxs(end) + (1:num_aug);
@@ -1561,11 +1475,7 @@ methods (Access = private)
             	% Bounds on optimizatoin vatiable 
         		lb = -inf(dim_y, 1);		
         		ub = inf(dim_y, 1); 
-
-            	%lb(gmsq_idxs) = 0;  
-            	%ub(gmsq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
-            	%lb(musq_idxs) = 0;
-            	%ub(musq_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2); 
+            	
                 lb(gmsq_idxs) = 0;  
                 ub(gmsq_idxs) = max((I_l(aug_idxs) - I_comp(aug_idxs)).^2, (I_u(aug_idxs) - I_comp(aug_idxs)).^2); 
                 lb(musq_idxs) = 0;
@@ -1599,8 +1509,8 @@ methods (Access = private)
             b_eq_tau_x(1:n) = d; 
 
             A_eq_tau_x(n + (1:n), tau_idxs) = -eye(n); 
-            A_eq_tau_x(n + (1:n), gm_idxs) = alph*eta*k_t*eye(n);
-            A_eq_tau_x(n + (1:n), mu_idxs) = (alph*k_t/eta)*eye(n);
+            A_eq_tau_x(n + (1:n), gm_idxs) = ratio*eta*k_t*eye(n);
+            A_eq_tau_x(n + (1:n), mu_idxs) = (ratio*k_t/eta)*eye(n);
             b_eq_tau_x(n + (1:n)) = tau_gearbox_inertia;
 
            
@@ -1624,19 +1534,13 @@ methods (Access = private)
 			A_eq_cost(:, Isq_idxs) = -eye(n);
 			b_eq_cost = I_comp.^2; 
 
-      
       		A_eq_other = [A_eq_gm_mu; A_eq_cost];
             b_eq_other = [b_eq_gm_mu; b_eq_cost];
-
-            A_ineq_other = []; 
-            b_ineq_other = []; 
 
             %
             %		Extra Linear Constraints 
             %
             if binary_aug 
-				
-
 
                 % For assignment of delta with driving/driven 
 				%epss = 1e-9; % tolerancing 
@@ -1654,16 +1558,6 @@ methods (Access = private)
                 gm_aug_idxs = gm_idxs(aug_idxs);  % USEFUL ABOVE TODO 
                 mu_aug_idxs = mu_idxs(aug_idxs); 
 
-                %{
-                A_del = zeros(2*n, dim_y);
-
-				A_del(1:n, I_idxs) = -diag(so);
-				A_del(1:n, del_idxs) = diag(so.*I_comp + I_u);
-
-				A_del(n + (1:n), I_idxs) = diag(so);
-				A_del(n + (1:n), del_idxs) = diag(so.*I_comp - I_u - epss);
-				b_del = [I_u; so.*I_comp - epss];
-                %}
                 % f(x) = -sign(omega)(I - I_comp)
                 I_comp_aug = I_comp(aug_idxs);
                 I_u_aug = I_u(aug_idxs);
@@ -1676,15 +1570,10 @@ methods (Access = private)
                 
                 A_del(1:num_aug, I_idxs(aug_idxs)) = -diag(so_aug);
                 A_del(1:num_aug, del_idxs) = diag(f_max);
-                %A_del(1:num_aug, del_idxs) = diag(so_aug.*I_comp_aug + I_u_aug);
 
                 A_del(num_aug + (1:num_aug), I_idxs(aug_idxs)) = diag(so_aug);
                 A_del(num_aug + (1:num_aug), del_idxs) = diag(f_min - epss);
-
                 b_del = [f_max; so_aug.*I_comp_aug - epss];
-                %b_del = [I_u_aug; so_aug.*I_comp_aug - epss];
-
-
 
 				% gm \equiv to delta*(I - I_comp)
                 tmp_max = I_u_aug - I_comp_aug + 0.1;
@@ -1709,28 +1598,9 @@ methods (Access = private)
                          -I_comp_aug - tmp_min; I_comp_aug + tmp_max];
 							
                 % TODO SPEED UP             
-				A_ineq_other = [A_ineq_other; A_del; A_del_gm];
-				b_ineq_other = [b_ineq_other; b_del; b_del_gm];
-
-                %{
-				%
-				%		 gm_sq + mu_sq = s 
-				%
-				A_gmmu_sq = zeros(n, dim_y);
-				A_gmmu_sq(:, gmsq_idxs) = eye(n);
-				A_gmmu_sq(:, musq_idxs) = eye(n);
-				A_gmmu_sq(:, s_idxs) = -eye(n);
-				b_gmmu_sq = zeros(n, 1);
-	
-				%
-				%		 delta + sigma = 1 
-				%
-				A_del_sig = zeros(n, dim_y);
-				A_del_sig(:, del_idxs) = eye(n);
-				A_del_sig(:, sig_idxs) = eye(n);
-				b_del_sig = ones(n, 1);
-                %}
-                
+				A_ineq_other = [A_del; A_del_gm];
+				b_ineq_other = [b_del; b_del_gm];
+            
                 %
                 %        gm_sq + mu_sq = s 
                 %
@@ -1750,8 +1620,11 @@ methods (Access = private)
 
 				A_eq_other = [A_eq_other; A_del_sig; A_gmmu_sq];
 				b_eq_other = [b_eq_other; b_del_sig; b_gmmu_sq];
-			end 
-        else  % NO GEARBOX 
+			else 
+                A_ineq_other = [];
+                b_ineq_other = [];
+            end 
+        else  % NO GEARBOX (Direct Drive) -- explicitly encode because faster
             dim_y = x_idxs(end); 
             lb = -inf(dim_y, 1);		
         	ub = inf(dim_y, 1);
@@ -1764,9 +1637,8 @@ methods (Access = private)
             b_eq_tau_x(1:n) = d; 
 
             A_eq_tau_x(n + (1:n), tau_idxs) = -eye(n);
-            A_eq_tau_x(n + (1:n), I_idxs) = alph*k_t*eye(n);
+            A_eq_tau_x(n + (1:n), I_idxs) = ratio*k_t*eye(n);
             b_eq_tau_x(n + (1:n)) = 0; % no gb inertia to account for 
-
 
             A_eq_other = [];	% no others 
             b_eq_other = []; 
@@ -1781,8 +1653,8 @@ methods (Access = private)
         lb(Isq_idxs) = 0;    % non-negativity 
         ub(Isq_idxs) = I_u.^2; 
 
-        lb(tau_idxs) = -gearbox.Max_int_torque;
-        ub(tau_idxs) = gearbox.Max_int_torque; 
+        lb(tau_idxs) = -gearbox.max_int_torque;
+        ub(tau_idxs) = gearbox.max_int_torque; 
 
         %
         %
@@ -1793,13 +1665,13 @@ methods (Access = private)
         %
         if nzvi > 0 
         	% TODO -- probably consider gb fully efficient at zero vel?
-        	% think through a little more (but then just alpha on next line)
-            A_eq_tau_x(zero_vel_idxs, zv_idxs) = alph;
+        	% think through a little more (but then just ratio on next line)
+            A_eq_tau_x(zero_vel_idxs, zv_idxs) = ratio;
 
             % Overwrite the other zero vel points, treat gb as fully eff 
             if eta < 1
-            	% Replace alpha*kt*eta with alph*kt*eta on those rows 
-            	A_eq_tau_x(zero_vel_idxs, gm_idxs(1) + zero_vel_idxs - 1) = alph*k_t;
+            	% Replace ratio*kt*eta with ratio*kt*eta on those rows 
+            	A_eq_tau_x(zero_vel_idxs, gm_idxs(1) + zero_vel_idxs - 1) = ratio*k_t;
             	A_eq_tau_x(zero_vel_idxs, mu_idxs) = 0;
             	b_eq_tau_x(zero_vel_idxs) = d(zero_vel_idxs) + tau_gearbox_inertia(zero_vel_idxs); 
             end 
@@ -1808,11 +1680,16 @@ methods (Access = private)
             A_ineq_zv = sparse([], [], [], 2*nzvi, dim_y, 2*nzvi);
             A_ineq_zv(1:nzvi, zv_idxs) = 1; 
             A_ineq_zv(nzvi + (1:nzvi), zv_idxs) = -1; 
-            b_ineq_zv = tau_friction_static * ones(2*nzvi, 1);
+            b_ineq_zv = tau_static_friction * ones(2*nzvi, 1);
 
-            % Stack em up
+            % Stack em up -- TODO -- could move these to later 
             A_ineq_other = [A_ineq_other; A_ineq_zv];
             b_ineq_other = [b_ineq_other; b_ineq_zv];
+        end 
+
+        if any(isnan(b_ineq_other))
+            disp('howwwwww')
+            keyboard
         end 
 
         if ~isempty(H)
@@ -1882,7 +1759,7 @@ methods (Access = private)
 
             q_tmp = zeros(dim_y, 1); 
             q_tmp(I_idxs) = c_tmp; 
-            q_tmp(Isq_idxs) = obj.Q{j + 1}(motor, gearbox); 
+            q_tmp(Isq_idxs) =  obj.Q{j + 1}(motor, gearbox); 
             q_tmp(x_idxs) = r_tmp; 
 
             if obj.lin_ineq(j)  % if linear 
@@ -2020,10 +1897,6 @@ methods (Access = private)
         	b_ineq_extra = [b_ineq_extra;  -b_ineq_H]; % NOTE signs 
         end  
 
-        % TODO -- naming -- dont over b_ineq name 
-        A_ineq = [A_ineq_other; A_ineq_extra; A_lin_frac];
-        b_ineq = [b_ineq_other; b_ineq_extra; b_lin_frac];
-
         %% ----- Incorporate Actual Cost --------------
         [M0_row, M0_col, M0_val] = find(obj.M{1}(motor, gearbox)); 
         Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
@@ -2076,8 +1949,8 @@ methods (Access = private)
     	matrices.beta0 = beta0;
     	matrices.A_eq = A_eq;
     	matrices.b_eq = b_eq; 
-    	matrices.A_ineq = A_ineq; 
-    	matrices.b_ineq = b_ineq;
+    	matrices.A_ineq = [A_ineq_other; A_ineq_extra; A_lin_frac];
+    	matrices.b_ineq = [b_ineq_other; b_ineq_extra; b_lin_frac];
     	matrices.lb = lb; 
     	matrices.ub = ub; 
     	matrices.quadcon = quadcon; 
@@ -2088,7 +1961,7 @@ methods (Access = private)
     	compensation_torques.tau_motor_friction = tau_motor_friction;
     	compensation_torques.tau_motor_inertia = tau_motor_inertia; 
     	compensation_torques.tau_gearbox_inertia = tau_gearbox_inertia;
-    	compensation_torques.tau_friction_static = tau_friction_static; % scalar
+    	compensation_torques.tau_static_friction = tau_static_friction; % scalar
 
     end % 
 
@@ -2102,6 +1975,7 @@ methods (Access = private)
     %
     %
     %
+
         bad_idxs = []; % initialize empty 
         directions = [];  % initialize empty 
         tau_error = []; 
@@ -2113,11 +1987,10 @@ methods (Access = private)
         end 
         
 
-        % If Actual solution  
+        % If Actual solution exists....
         k_t = motor.k_t; 
-        alph = gearbox.alpha; 
-        eta = gearbox.eta; 
-
+        ratio = gearbox.ratio; 
+        eta = gearbox.efficiency; 
 
         I_comp = comp_torques.I_comp; 
 
@@ -2136,17 +2009,16 @@ methods (Access = private)
         tau_motor_friction = comp_torques.tau_motor_friction;
         tau_motor_inertia = comp_torques.tau_motor_inertia;
         tau_gearbox_inertia = comp_torques.tau_gearbox_inertia;
-        tfs = comp_torques.tau_friction_static;
 
         % sol.tau -- torque felt at the joint (afte accounting for torque to acell gearbox )
         if eta < 1
             sol.I_gm = y_sol(index_map.gm);
             sol.I_mu = y_sol(index_map.mu);
-            sol.tau = alph*k_t*eta*(sol.I_gm) + (alph*k_t/eta)*(sol.I_mu)...
-                     + alph*static_motor_friction - tau_gearbox_inertia;
+            sol.tau = ratio*k_t*eta*(sol.I_gm) + (ratio*k_t/eta)*(sol.I_mu)...
+                     + ratio*static_motor_friction - tau_gearbox_inertia;
         else 
-            sol.tau = alph*k_t*(I_shift) ...
-                    + alph*static_motor_friction - tau_gearbox_inertia;
+            sol.tau = ratio*k_t*(I_shift) ...
+                    + ratio*static_motor_friction - tau_gearbox_inertia;
         end 
 
         Isq = y_sol(index_map.Isq);
@@ -2165,14 +2037,14 @@ methods (Access = private)
         
         % TODO -- rename zero vel things to make it more clear its torque 
         % ADD THESE
-        sol.tau_friction = -alph*(tau_motor_friction.*(eta*driving + ...
+        sol.tau_friction = -ratio*(tau_motor_friction.*(eta*driving + ...
                             driven/eta) -  static_motor_friction);
-        sol.tau_inertia = -alph*tau_motor_inertia.*(eta*driving + ...
+        sol.tau_inertia = -ratio*tau_motor_inertia.*(eta*driving + ...
                         driven/eta + zero_vel) - tau_gearbox_inertia;
         tau_m = k_t * sol.I; % from current 
 
         % Just electromechanical 
-        sol.tau_em = alph*(tau_m.*(eta*driving + driven/eta + zero_vel)); 
+        sol.tau_em = ratio*(tau_m.*(eta*driving + driven/eta + zero_vel)); 
 
 
         % Everything should line 
@@ -2228,8 +2100,9 @@ methods (Access = private)
         %} 
 
         if isempty(bad_idxs) && ~isempty(tau_bad_idxs)
+            % ok, well with huge gear ratios sure 
             disp('curious,,,,')
-            keyboard
+            %keyboard
         end 
 
 
@@ -2239,6 +2112,73 @@ methods (Access = private)
 
 
 
+    end 
+
+
+
+    function [tau_motor_friction, tau_static_friction] = ...
+                                            friction_model(obj, motor, gearbox)
+    %
+    %   TODO - thorough explanation
+    %
+    %
+    %
+    %
+        % TODO -- incorporate 'settings' or whatever
+        
+        % TODO
+        % TODO      How do we handle missing inputs?????????
+        % TODO
+        % TODO 
+        omega = obj.omega;
+        sign_omega = sign(omega); 
+
+
+        if strcmp(motor.type, 'DC')
+
+            if ~isnan(motor.coulomb_friction)
+                tau_static_friction = motor.coulomb_friction;
+                coulomb_friction = sign_omega*motor.coulomb_friction;
+            else 
+                keyboard
+                %tau_static_friction = 
+                %coulomb_friction = 
+            end 
+
+            if isnan(motor.viscous_friction)
+                viscous_friction = 0;
+            else 
+                viscous_friction = omega*motor.viscous_friction;
+            end 
+        elseif strcmp(motor.type, 'BLDC')
+            if ~isnan(motor.coulomb_friction)
+                tau_static_friction = motor.coulomb_friction; 
+                coulomb_friction = sign_omega*motor.coulomb_friction;
+            else
+                tau_static_friction = 0; 
+                coulomb_friction = 0;
+            end 
+
+            if ~isnan(motor.viscous_friction)
+                viscous_friction = omega*motor.viscous_friction;
+            else 
+                % estimate from no-load tests
+                if isnan(motor.I_nl)
+                    I_nl = (motor.V - motor.k_t*motor.omega_nl)/motor.R; 
+                else
+                    I_nl = motor.I_nl;
+                end  
+                    % compute what it woud be 
+                drag_torque = motor.k_t*I_nl;
+                c_v = drag_torque/motor.omega_nl;
+                viscous_friction = c_v*omega;  
+            end 
+        else 
+            error('friction_model: Invalid motor type');
+        end 
+            
+        % combine coulomb and viscous 
+        tau_motor_friction = coulomb_friction + viscous_friction; 
     end 
 
 
@@ -2415,11 +2355,54 @@ end % end private methods
 
 
 
-
-
 %==============================================================================
 end % end CLASSDEF
 
+function settings = validate_settings(settings)
+    % Fill in default settings -- validate settings function 
+    if ~isfield(settings, 'debug'); settings.debug = true; end 
+    assert(islogical(settings.debug), 'debug setting must be true/false');
+    if settings.debug; fprintf('Debug is on...\n');                 end; 
+    if ~isfield(settings, 'rho'); settings.rho = 1e-4;              end
+    if ~isfield(settings, 'verbose'); settings.verbose = 1;         end
+    if ~isfield(settings, 'print_freq'); settings.print_freq = 500; end
+    if ~isfield(settings, 'reltol'); settings.reltol = 1e-3;        end 
+    if ~isfield(settings, 'abstol'); settings.abstol = 1e-7;        end  
+
+    if ~isfield(settings, 'qcvx_reltol')
+        settings.qcvx_reltol = 1e-3; 
+    end 
+    if ~isfield(settings, 'qcvx_abstol')
+        settings.qcvx_abstol = 1e-7; 
+    end 
+
+    valid_solvers = {'gurobi', 'ecos', 'sedumi'};
+    has_gurobi = ~isempty(which('gurobi.m'));
+    has_ecos = ~isempty(which('ecos.m'));
+    has_sedumi = ~isempty(which('sedumi.m'));
+
+    if ~isfield(settings, 'solver')
+        settings.solver = 'gurobi'; % default, fastest
+    end
+
+    if strcmp(settings.solver, 'gurobi')
+        if ~has_gurobi
+            settings.solver = 'ecos';
+            warning('Gurobi solver not found');
+        end 
+    end 
+    if strcmp(settings.solver, 'ecos')
+        if ~has_ecos
+            settings.solver = 'sedumi';
+            warning('ECOS solver not found');
+        end 
+    end 
+    if strcmp(settings.solver, 'sedumi')
+        if ~has_sedumi
+            error('No valid solvers found in path');
+        end 
+    end 
+end 
 
 %%%% Non Class Methods 
 function str = sciprint(num, specifier)
@@ -2432,5 +2415,173 @@ function str = sciprint(num, specifier)
     end 
 end 
 
+function [test_motor, test_gearbox] = test_motor_gearbox()
+
+    test_motor = struct('key', 'none',...
+                        'manufacturer', 'none',...
+                        'ID', 'none',...
+                        'type', 'DC',...        % TODO -- double check if this can matter
+                        'V', 1,...
+                        'k_t', 1,...
+                        'R', 0.1,...
+                        'L', 1e-3,...
+                        'mass', 1,...
+                        'inertia', 1e-6,...
+                        'omega_nl', 1000,...
+                        'I_nl', 0.1,...
+                        'max_int_torque', inf,...
+                        'max_int_speed', inf,...
+                        'max_cont_speed', inf,...
+                        'max_cont_power', inf,...
+                        'coulomb_friction', 1e-3,...
+                        'viscous_friction', 1e-4,...
+                        'Rth1', 1,...
+                        'Rth2', 1);
+
+    test_gearbox = struct('key', 'none',...
+                          'manufacturer', 'none',...
+                            'ID', 'none',...
+                            'type', 'planetary',...        % TODO -- double check if this can matter
+                            'stages', 1,...
+                            'ratio', 2,...
+                            'mass', 0.1,...
+                            'inertia', 1e-6,...
+                            'efficiency', 0.9,...
+                            'direction', 1,...
+                            'max_int_torque', inf,...
+                            'max_cont_torque', inf); 
+end 
+
+    %{
+     function ranked_combos = apply_rankings(obj, combos)
+    %
+    %
+    %
+    
+        % if no rankings, just return
+        if nnz(obj.ranking_matrix) == 0
+            ranked_combos = combos;
+            return;
+        end 
+
+        ranked_combos = zeros(size(combos) + [0, 1]);  % extra col 
+        num_combos = size(combos, 1);
+        % O(n) -- get all the rankings  
+        for j = 1:num_combos
+            motor_idx = combos(j, 1);
+            gear_idx = combos(j, 2);  
+            ranking = obj.ranking_matrix(motor_idx, gear_idx); 
+            ranked_combos(j, :) = [ranking, motor_idx, gear_idx]; 
+        end 
+        % O(nlogn) -- sort by the rankings 
+        [~, sort_idxs] = sort(ranked_combos(:, 1)); 
+        ranked_combos = ranked_combos(sort_idxs, :); 
+    end 
 
 
+
+    function [combo_list] = get_combinations(obj)
+    %**********************************************************************
+    % Method: get_combinations 
+    % 
+    % Inputs: 
+    %       None
+    %
+    % Outputs:
+    %       N x 2 array where N is the number of combinatioms. First col 
+    %       gives index of motor in motor table
+    %       and second col gives the index of the gearbox. For direct 
+    %       drive (no gearbox) a 0 is used in the second column as a flag
+    %       for no gearbox 
+    %
+    %   Added:   
+    %**********************************************************************    
+
+        % NOTE if there are filter criteria like motor velocity 
+        % that needs to be included here because function of both 
+        % motor max speed AND gear ratio
+
+        %if obj.settings.verbose; fprintf('\nGetting combinations...'); end 
+
+
+        % Loop through motors (NOTE: list will typically be filtered before)
+        num_motors = size(obj.motors, 1);
+        combo_list = {}; % start as cell because dont know how big it needs to be 
+        for i = 1:num_motors 
+            motor_idx = i; % For now --- later -- use filtered idxs 
+            % indices in gear table 
+            compatible_gears = cell2mat(obj.motors.('gearboxes')(motor_idx)); 
+            for j = 1:numel(compatible_gears)
+                % TODO: if 'filtered' this combo may be excluded 
+                gear_idx = compatible_gears(j); 
+                combo_list{end + 1, 1} = [motor_idx, gear_idx]; 
+            end 
+        end 
+        % convert cell to N x 2 array 
+        combo_list = cell2mat(combo_list); 
+
+        %combo_list = combo_list(1:min(length(combo_list), 400), :); 
+        %warning('remember to comment this debug thing out limiting combos to 200')
+    
+
+    end 
+    %} 
+
+
+    %{
+    function new_combos = velocity_filter(obj, combos)
+    %
+    %
+    %
+        motors = table2struct(obj.motors);
+        gears = table2struct(obj.gearboxes);
+
+        num_init_combos = size(combos, 1); 
+        obj.vprintf(1, 'Found %d initial feasible combinations\n', num_init_combos);
+
+        % Starting at end of combo list and remove based on velocty 
+        max_output_vel = max(abs(obj.omega)); 
+
+        for j = length(combos):-1:1
+            motor_idx = combos(j, 1); 
+            gear_idx = combos(j, 2); 
+
+            max_motor_vel = max_output_vel * gears(gear_idx).ratio;  
+            if max_motor_vel > motors(motor_idx).omega_max
+                combos(j, :) = []; % clear it out 
+            end 
+        end 
+        new_combos = combos; 
+
+
+        num_updated_combos = size(combos, 1); 
+        obj.vprintf(1, 'Filtering by max velocity removed: %d combinations\n',...
+                            num_init_combos - num_updated_combos);
+    end 
+    %} 
+
+
+
+    %{
+    function update_rankings(obj, cost_list, combos)
+    %
+    %
+    %
+
+        % May be called by user so add validation
+        cost_list = cost_list(:); 
+
+        assert(size(combos, 1) == length(cost_list),...
+                 'Number of combinations must match length of costs');
+        assert(size(combos, 2) == 2, 'Combinations must be 2xN matrix'); 
+
+        [~, rank_idxs] = sort(cost_list);   % Need to index this back in 
+        tmp_table = [cost_list, combos];
+        obj.rankings = tmp_table(rank_idxs, :); 
+
+        % row - motor idx, col - gear idx, val = ranking - 0 is flag for inf 
+        ranking_matrix = sparse(combos(:, 1), combos(:, 2), cost_list,...
+                                     obj.num_motors, obj.num_gearboxes); 
+        obj.ranking_matrix = ranking_matrix; 
+    end 
+    %} 
