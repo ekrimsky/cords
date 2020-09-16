@@ -1,5 +1,6 @@
-function [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc] = prep_socp(Q, obj, objcon, A_eq, b_eq,...
-                            A_ineq, b_ineq, quadcon, lb, ub,  cutoff)
+function [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc] = prep_socp(Q, obj,...
+                                        objcon, A_eq, b_eq,...
+                                    A_ineq, b_ineq, quadcon, lb, ub,  cutoff)
 %*******************************************************************************
 %   Function:
 %        
@@ -32,6 +33,9 @@ function [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc] = prep_socp(Q, obj, objcon, A
 % TODO: if there is a quadratic term, we need introduce a new variable 
 % TODO: check that model sense is min (flip signs on obj if not )
 % TODO -- cutoffs 
+
+% ASSUME ALL MATRICES ARE SYMMETRIC (CAN ALSO REPRESENT LIKE SO)
+
 
 % objective is just 1 variable - cost 
 % this lets us use cutoffs 
@@ -106,99 +110,140 @@ for j = 1:num_quadcon
     qc = quadcon(j).q/2;  % NO FACTOR IN GUROBI SOLVE -- MAY NEED TO CHECK DOCS 
 
     % Because we are callign from motor select, will assume
-    % our inputs are valid 
+    % our inputs are valid (trust caller to validate inputs)
 
     % x^T Q x + 2qx < rhs   
     %qc = quadcon(i).q;
 
-    [row, col, ~] = find(Qj);
-    %unique_cols = unique(col); 
-    unique_cols = find(any(Qj)); 
-
-    Q_short = Qj(unique_cols, :);  % cut empty rows 
-    Q_small = full(Q_short(:, unique_cols)); 
-    [V, D] = eig(Q_small); 
-    v = V(:, 1); 
-    min_eig = D(1,1); 
-
-    % Type 1 -- Standard PSD Quadratic Constraint 
-    if min_eig >= 0     % standard quad constraint
 
 
-        % TODO -- facotr in RHS 
 
-        if length(qc) < dim_y   % For all cases except cost itself
-            qc = [qc; 0];
+    [rows, cols, vals] = find(Qj);
+
+
+    %%% detemine if SOC/ROTSOC or Standard PSD 
+    %
+    %
+    %  If standard soc (ie. x^2 <= y^2) there will be a negative value on the diagonal
+    %  If roated soc (ie x^2 <= yz) if assume symmetric -- 2 row/col entries
+    %      where there is only one value in row/col, the value is negative
+    %       and has a symetric entry about the diagonal - do O(n) search 
+
+    ctype = 1; % flag for standard PSD constraint 
+    for i = 1:length(vals)
+        val = vals(i);
+        if val < 0
+            col = cols(i);
+            row = rows(i); 
+            if row == col
+                % negative value on the diagonal - standard soc
+                ctype = 2; 
+                neg_val = val;
+                neg_col = col;
+                neg_row = row;
+                break; 
+            elseif nnz(Qj(row, :)) == 1 % singular row  
+                ctype = 3;
+                neg_val = val;
+                neg_col = col;
+                neg_row = row; 
+                break; 
+            end 
         end 
 
-        qc_half = qc'/sqrt(2); 
-
-        %[new_rows, ~, ~] = find(Q_short); 
-        W = sparse([] , [], [], length(unique_cols), dim_y, numel(Q_small)); 
-        W(:, col) = chol(Q_small);  % faster than sqrtm 
+    end 
 
 
-        % should reference ECOS paper or some other documentation 
-        % relalted to some code in ECOSQP 
-        % See note: 6/3/20 
-        %G = [qc_half;  -W; -qc_half];
-        % NOTE: can speed up a lot of ths spart indexing in this block 
-        G = sparse([], [], [], length(unique_cols) + 2, dim_y, nnz(W) + 2*numel(qc_half)); 
-        G(1, :) = qc_half;
-        G(2:end-1, :) = -W; 
-        G(end, :) = -qc_half; 
+    % 
+    %   Consider [1, -1;
+    %            -1, 1]; % positivie SEMIdef  -- quadractic (x - y)^2
+    % 
+    unique_cols = find(any(Qj)); 
+     
 
-        h  = [1/sqrt(2);  zeros(size(W,1),1); 1/sqrt(2)]; 
+    switch ctype 
+        % Type 1 -- Standard PSD Quadratic Constraint 
+        case 1  % standard psd 
 
-        
-        %G = [c_half', -1/sqrt(2);
-        %      -W,  zeros(size(W,1),1);
-        %      -c_half', +1/sqrt(2)];
-        %h  = [1/sqrt(2);  zeros(size(W,1),1); 1/sqrt(2)]; 
-    else % Type 2 -- SOC Constraint 
-        if nnz(v) == 1 % standard SOC 
-            % Get positive def submatrix 
+            % TODO -- facotr in RHS 
 
-            display('foooooooooooooooooooooo'); error('fff')
+            % For all cases except cost itself
+            if length(qc) < dim_y   
+                qc = [qc; 0];
+            end 
+            qc_half = qc'/sqrt(2); 
 
-            v_idx = find(v); 
-            exclude_col = unique_cols(v_idx); 
-            psd_cols = setdiff(unique_cols, exclude_col); 
-            Qhalf_psd = chol(Q_small(psd_cols, psd_cols)); 
+            Q_short = Qj(unique_cols, :);  % cut empty rows 
+            Q_small = full(Q_short(:, unique_cols)); 
+
+           
+
+            W = sparse([], [], [], length(unique_cols), dim_y, nnz(Q_small)); 
+
+            try
+                W(:, unique_cols) = chol(Q_small);  % faster than sqrtm 
+            catch ME   % for pos semi def case 
+                [tmp, ~] = sqrtm(Q_small);
+                W(:, unique_cols) = tmp; 
+            end 
+
+            % TODO should reference ECOS paper or some other documentation 
+            % relalted to some code in ECOSQP 
+            % See note: 6/3/20 
+            %G = [qc_half;  -W; -qc_half];
+            % NOTE: can speed up a lot of ths spart indexing in this block 
+            G = sparse([], [], [], length(unique_cols) + 2, dim_y, nnz(W) + 2*numel(qc_half)); 
+            G(1, :) = qc_half;
+            G(2:end-1, :) = -W; 
+            G(end, :) = -qc_half; 
+
+            h  = [1/sqrt(2);  zeros(size(W,1),1); 1/sqrt(2)]; 
+            %G = [c_half', -1/sqrt(2);
+            %      -W,  zeros(size(W,1),1);
+            %      -c_half', +1/sqrt(2)];
+            %h  = [1/sqrt(2);  zeros(size(W,1),1); 1/sqrt(2)]; 
+        case 2 % Standard SOC  
+            psd_cols = setdiff(unique_cols, neg_col); 
+            Q_short = Qj(psd_cols, :);  % cut empty rows 
+            Q_small = full(Q_short(:, psd_cols)); 
+            Qhalf_psd = chol(Q_small); % NOTE: fail on semidef? 
 
             W = sparse([], [], [], length(psd_cols), dim_y, nnz(Qhalf_psd));
             W(:, psd_cols) = Qhalf_psd; 
 
             num_rows =  length(psd_cols) + 1;             
             c_tmp = zeros(1, dim_y); 
-            c_tmp(exclude_col) = sqrt(-min_eig); 
+            c_tmp(neg_col) = sqrt(-neg_val); 
             G = [-c_tmp; -W]
             h = zeros(num_rows, 1);
+        case 3 % rotated SOC 
+            exclude_cols = [neg_col, neg_row];
+            psd_cols = setdiff(unique_cols, exclude_cols);   % cols in original
 
-        elseif nnz(v) == 2 % rotated SOC 
-
-
-            display('bar'); error('fffff')
-
-            v_idxs = find(v); 
-            exclude_cols = unique_cols(v_idxs); 
-            psd_cols = setdiff(unique_cols, exclude_cols); 
-            Qhalf_psd = chol(Q_small(psd_cols, psd_cols)); 
+            Q_short = Qj(psd_cols, :);  % cut empty rows 
+            Q_small = full(Q_short(:, psd_cols)); 
+            Qhalf_psd = chol(Q_small); 
             W = sparse([], [], [], length(psd_cols), dim_y, nnz(Qhalf_psd));
             W(:, psd_cols) = Qhalf_psd; 
 
-            num_rows =  length(psd_cols) + 2;             
+            num_rows =  length(psd_cols) + 2;     
+
             c_tmp1 = zeros(1, dim_y); 
-            c_tmp1(exclude_cols) = sqrt(-min_eig) * [1, 1]; 
+            c_tmp1(exclude_cols) = sqrt(-2*neg_val) * [-1, -1]; 
             c_tmp2 = zeros(1, dim_y); 
-            c_tmp2(exclude_cols) = sqrt(-min_eig) * [-1, 1]; 
-            
-            G = [c_tmp1; -2*W; ctmp2]
+            c_tmp2(exclude_cols) = sqrt(-2*neg_val) * [1, -1]; 
+
+            %{        
+            c_tmp1 = zeros(1, dim_y); 
+            c_tmp1(exclude_cols) = sqrt(-neg_val) * [1, 1]; 
+            c_tmp2 = zeros(1, dim_y); 
+            c_tmp2(exclude_cols) = sqrt(-neg_val) * [-1, 1]; 
+            %} 
+            G = [c_tmp1; -2*W; c_tmp2];
             h = zeros(num_rows, 1);
-        else
-            error('invalid constraint matrix')
-        end 
-    end 
+        otherwise
+            error('Invalid quadaratic constraint type');
+    end % end switch
 
 
     G_cell{j} = G; 
