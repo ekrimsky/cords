@@ -1,5 +1,5 @@
-function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq, b_ineq,... 
-                                                            quadcon, lb, ub)
+function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq,...
+                                    b_ineq, quadcon, lb, ub, cutoff, settings)
 %
 %
 %
@@ -16,13 +16,12 @@ function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq, b_in
 
     dim_y = length(lb); 
 
-
+    model.Q = Q; 
     model.A = A_all;
-    model.Q = Q_cost; 
     model.rhs = b_all; 
     model.sense = sense;   % equality/inequality sense 
-    model.obj = c_cost;  % linear objective term
-    model.objcon = beta0; % constant objective term 
+    model.obj = obj;  % linear objective term
+    model.objcon = objcon; % constant objective term 
     model.lb = lb; 
     model.ub = ub; 
 
@@ -42,77 +41,56 @@ function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq, b_in
     params.cutoff = cutoff; 
     params.outputflag = 0;      % TODO OPTIONAL FOR LOGGING TO FILE TOO -- IF IN DEBUG MODE 
 
-    params.FeasibilityTol = obj.solve_settings.feastol;
-    params.OptimalityTol = obj.solve_settings.abstol; 
+    params.FeasibilityTol = settings.feastol;
+    params.OptimalityTol = settings.abstol; 
+
+
     %params.BarConvTol = 1e-9; % defaulat 1e-8 
     %params.BarQCPConvTol = 1e-9; % default 1e-6
 
-
-    if strcmpi(obj.settings.solver, 'gurobi') 
-        if mixed_integer
-            %params.presolve = 0;
-            %params.FeasibilityTol = 1e-2; 
-            params.IntFeasTol = 1e-4; % default 1e-5, max 1e-1, min 1e-9 
-            model.vtype(matrices.binary) = 'B'; 
-            params.outputflag = 1; % for debug 
-        end 
-    else 
-        error('Havent written external B&B module yet');
-    end 
-
     result = gurobi(model, params); 
 
-    if mixed_integer
-        %display(result)
-        disp('lll--------------------------------- MIXED INT SOLVED ========')
+    % In rare cases the gurobi presolve proceduce can lead to numerical issues
+    % leading to suboptimal termination. In this we will try to solve again
+    % with presolve disabled
+    if strcmp(result.status, 'SUBOPTIMAL')
+        %arams.ScaleFlag = 2;
+        %params.CrossoverBasis = 1; 
+        params.cutoff = inf; 
+        params.Presolve = 0;
+        params.Aggregate = 0; 
+        params.AggFill = 0; 
+        params.BarConvTol = 1e-7; 
+        %params.NumericFocus = 1;
+        params.BarQCPConvTol = 1e-5;   % defualt 1e-6 
+        result = gurobi(model, params); 
     end 
-    % TODO -- clean up this switch so not as much code reused 
-    % GO THROUGH ALL STATUS CODES             
+
+
+
     % TODO https://www.gurobi.com/documentation/9.0/refman/optimization_status_codes.html
 
     switch result.status 
-
         case 'OPTIMAL'
-            y_sol = result.x; 
-            combo_cost = result.objval; % NOTE: not subtracting off augmented cost 
         case 'SUBOPTIMAL'
+            % For linear fractional problems where we are really only concerend 
+            % with feasiblity but still add the rho cost, 'subpoptimal'
+            % solutions are fine 
 
-
-            y_sol = result.x; 
-            % subtract off cost augmentation 
-            combo_cost = result.objval; 
-
-            %if combo_cost <= cutoff
-
-            % TODO -- should this be the condition? what about subotimal solves on fractional problems
-            if (result.objval <= cutoff) && strcmp(obj.problem_type, 'standard')
-
-                warning(['Solver returned suboptimal solution',...
+            if (result.objval <= cutoff) 
+                warning(['Gurobi solver returned suboptimal solution',...
                      ' may need to loosen tolerances']);
+                keyboard
 
-                display(result)
-                display(combo_cost)
-                %keyboard
-            
-            else 
-                y_sol = nan(dim_y, 1);
-                combo_cost = inf; % returned "suboptimal" but really cutoff 
             end 
         case 'NUMERIC'
-            disp('yoooooooooooooooooooooooooooooooooooooooooooooooo')
-            keyboard 
+            warning(['Gurobi solver encountered numerical issues']);
         case 'UNBOUNDED'
-
-            error(['Unbounded problem encountered',...
-                        ' Check that problem is well posed']);
-        case 'INF_OR_UNBD'
-            y_sol = nan(dim_y, 1);
-            combo_cost = inf;
-            %warning('Problem may be unbounded\n'); % WHY NOT PRINTIG? 
+            warning(['Gurobi solver encountered unbounded problem. ',...
+                        'Check problem formulation']);
         otherwise  % CUTOFF / INF_OR_UNBD 
-            y_sol = nan(dim_y, 1); 
-            combo_cost = inf; 
-    end 
+            result.objval = inf; % add this onmto the results 
+    end  % end switch 
 
 
 
