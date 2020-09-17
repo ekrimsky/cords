@@ -1,20 +1,33 @@
-classdef cords < matlab.mixin.Copyable 
-% CORDS (Convex Optimal Robot Drive Selection)    
+classdef cords < handle 
+% CORDS (Convex Optimal Robot Drive Selection)    blah bla
 %      Summary goes here  
 %
-%    This needs to work well with 'help'
+%
+%   prob = CORDS() does a
+%
+%   prob = CORDS('settings', settings, 'solve_settings') or something does another thing
 %
 %
-%   CORDS Methods:
-%       update_problem - 
-%       optimize - 
+% CORDS Properties:
+%     settings       - struct, controls which solver, print outs, etc     
+%     solve_settings - struct, controls numerical tolerances and thresholds for solving
+%     problem_data   - struct, the data for the problem we are solving 
+%     problem_type   - 'standard' (convex), or 'fractional' (quasi-convex)
+%     mg_database    - mgdb (Motor Gearbox DataBase) object with motor/gearbox data
 %
-%   CORDS Properties: 
-%       settings - 
-%       rankings - 3 x N array. Cols - [expected_cost, motor_idx, gear_idx]
-%     
+% CORDS Methods:
+%       update_problem  - updates the data for the problem 
+%       optimize        - runs the optimization procedure using the loaded data 
+%       update_settings - 
+%       update_solve_settings -
+%       update_selection_filters - 
 %
-%
+%   Straight up an actual explanation of some of the math and an instruction to 
+%   look at the help for the methods 
+%   
+%   NOTE: can we think of a real reason to not combine update problem and optimize?
+%   One potential reason (although we dont have this functionality yet) is if we 
+%   wanted to opitimize and then change a setting or something (think on this more)
 %
 %   Blah. blah. blah 
 %
@@ -22,31 +35,27 @@ classdef cords < matlab.mixin.Copyable
 %
 %   A reference to the eventual paper 
 %
-%   see also -- how do you link these????
 %
 %   Author: 
 %       Erez Krimsky, ekrimsky@stanford.edu, 7/27/20
 %       Stanford University, Biomechatronics Lab 
 %
+%
+%
+%   See also MGDB
 properties (GetAccess = public, SetAccess = private)
     settings        %  for solver, verbose, print frequency
     solve_settings  % numerical tolerances and the like  
-    problem_type    % char array, 'standard' (SOCP) or 'fractional'
     problem_data    % data for the problem we want to solve 
-    test_motor      % for validating input properties 
-    test_gearbox     % for validating input properitse 
+    problem_type    % char array, 'standard' (SOCP) or 'fractional'
     mg_database     % motor gearbox database object 
-    % TODO Friction and other model settings? 
+    % could add update_settings or similar -- could make it easier for people to debug issues 
 end 
 
 
 methods (Access = public)
 
-        % https://www.mathworks.com/help/matlab/matlab_oop/scoping-classes-with-packages.html
-
-
     function obj = cords(varargin) % we will parse the inputs directly 
-    %**********************************************************************
     % Constructor for the class. 
     %
  	% 	Optional Inputs (in order)
@@ -57,70 +66,72 @@ methods (Access = public)
     %
     % Returns:
     %    MotorSelection object
-    %********************************************************************    
         ip = inputParser; 
         addParameter(ip, 'settings', []);
         addParameter(ip, 'solve_settings', []);
+        addParameter(ip, 'reuse_db', true, @(x)islogical(x));
         parse(ip, varargin{:}); 
 
+        reuse_db = ip.Results.reuse_db; 
         obj.settings = validate_settings(ip.Results.settings); 
         obj.solve_settings = validate_solve_settings(ip.Results.solve_settings); 
 
+        % Look for a saved file called motor_database.mat (start looking in pwd?)
+        % If cannot find a file create one and then save it
+        % Database file will get overwritten after finishing optimizatino to 
+        % to reflect rankings 
+        % TODO - write a custom load or something, want to link verbosity
 
-        [test_motor, test_gearbox] = test_motor_gearbox();
-        obj.test_motor = test_motor;
-        obj.test_gearbox = test_gearbox; 
+        % TODO -- Just link it with an update settings ---- 
+
+        db_files = dir(fullfile('**', 'mg_database.mat')); 
+        no_database = true; 
+        if (numel(db_files) >= 1) && reuse_db
+            if numel(db_files) > 1
+                warning('multple motor/gearbox database files found');
+            end 
+            db_file = fullfile(db_files(1).folder, db_files(1).name); 
+            try
+                load(db_file, 'mg_database');
+                obj.vprintf(1, 'Loaded database from \n\t%s\n', db_file);
+                no_database = false; % because there is one
+            catch ME
+                warning(sprintf(['No mdgb object named "mg_database" in: ',...
+                                                        '\n\t%s'], db_file));
+            end 
+        end 
+
+        if no_database % no database file -- create new one and save it 
+            mg_database = mgdb();
+            db_file = fullfile(pwd, 'mg_database.mat');
+            save(db_file, 'mg_database');
+            obj.vprintf(1, ['New motor/gearbox database created, saved in: ',...
+                                                       '\n\t%s\n'], db_file);
+        end 
+        
+        obj.mg_database = mg_database; 
 
         % NOTE: might want to look for saved file that has a database object 
         % stored away and ONLY if we cant find one, instantiate a new one
         % the reason to do this is that reading in all the csvs can be slow 
-        obj.mg_database = mgdb(); 
     end %end constructor 
 
     
 
-
-    %**********************************************************************
-    % Method: update_problem
-    % 
-    % Inputs: 
-    %       problem_data, a struct with the following
-    %       
-    %       Required Fields: 
-    %
-    %       Optional Fields:
-    %
-    %   Added:   
-    %**********************************************************************
     function update_problem(obj, problem_data)
-    %
+    % update_problem
     %   
     %
     %
     %
     %
     %
-
         [problem_data, problem_type] = obj.validate_problem_data(problem_data);
         obj.problem_data = problem_data; 
         obj.problem_type = problem_type; 
     end 
 
-        
-
-
-
-    %**********************************************************************
-    % Method: optimize
-    % 
-    % Inputs: 
-    %       % DOcumentation for methods???? 
-    %      
-    % Returns:
-    %   
-    %
-    %   Added:   
-    %**********************************************************************
+    
     function [sol_structs] = optimize(obj, varargin)
     %   optimize Do a thing dude 
     %
@@ -150,6 +161,8 @@ methods (Access = public)
         %   TODO filter me 
         %   TODO filter me 
         %
+
+
         obj.mg_database.update_filter('omega_max', max(abs(obj.problem_data.omega))); 
 
         [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
@@ -182,8 +195,36 @@ methods (Access = public)
         % Update the rankings using the cost list to speed up the next solve 
 
         obj.mg_database.update_rankings(motor_keys, gearbox_keys, cost_list);
+        mg_database = obj.mg_database;
+        db_file = fullfile(pwd, 'mg_database.mat');
+        save(db_file, 'mg_database');
+        obj.vprintf(1, '\nSaved motor/gearbox database:\n\t\n%s updated\n', db_file);
 
     end % end optimize 
+
+
+    function update_settings(obj, new_settings)
+    %
+    %
+    %
+    %
+    end 
+
+    function update_solve_settings(obj, new_solve_settings)
+    %
+    %
+    %
+    %
+    %
+    end 
+
+
+    function update_selection_filters(obj, new_selection_filters)
+    %
+    %
+    %   Pass this straight to mgdb 
+    %
+    end 
 
 
 end % end public methods 
@@ -200,13 +241,6 @@ end % end public methods
 %
 
 
-    % NOTE: some plotting methods could be good 
-    % Selection Filtering?
-    % Private methods? 
-
-    % Function to CLEAR FILTERS on motor/gb -- go back to original 
-    % ...this would probably clear any motor/gb that was manually added
-    % no great way around this 
 
 methods (Access = private)
 
@@ -218,6 +252,7 @@ methods (Access = private)
     %
 
         % TODO add OPTIIONAL x_ub/x_lb as more efficient 
+        nd = 8; % number of decimals to keep on omega, omega_dot
 
         assert(isfield(problem_data, 'omega'), 'Missing omega');
         assert(isfield(problem_data, 'Q'), 'Missing Q');
@@ -225,45 +260,46 @@ methods (Access = private)
         assert(isfield(problem_data, 'M'), 'Missing M');
         assert(isfield(problem_data, 'r'), 'Missing r');
         assert(isfield(problem_data, 'beta'), 'Missing beta');
-        assert(isfield(problem_data, 'H'), 'Missing H');
-        assert(isfield(problem_data, 'b'), 'Missing b');
+        assert(isfield(problem_data, 'G'), 'Missing G');
+        assert(isfield(problem_data, 'h'), 'Missing h');
         assert(isfield(problem_data, 'T'), 'Missing T');
         assert(isfield(problem_data, 'd'), 'Missing d');
         assert(isfield(problem_data, 'I_max'), 'Missing I_max');
         assert(isfield(problem_data, 'V_max'), 'Missing V_max');
 
-        assert(isnumeric(problem_data.I_max) && problem_data.I_max > 0, 'I_max must be positive');
-        assert(isnumeric(problem_data.V_max) && problem_data.V_max > 0, 'V_max must be positive');
+        assert(isnumeric(problem_data.I_max) && problem_data.I_max > 0,...
+                                                     'I_max must be positive');
+        assert(isnumeric(problem_data.V_max) && problem_data.V_max > 0,...
+                                                     'V_max must be positive');
 
 
         % Get dummy motor and dummy gearbox for input validation 
-        test_motor = obj.test_motor; 
-        test_gearbox = obj.test_gearbox; 
+        [test_motor, test_gearbox] = test_motor_gearbox(); 
 
-        omega = problem_data.omega(:); 
+        omega = problem_data.omega(:);
         Q = problem_data.Q; 
         c = problem_data.c;
         M = problem_data.M; 
         r = problem_data.r; 
         bet = problem_data.beta; 
-        H = problem_data.H; 
-        b = problem_data.b; 
+        G = problem_data.G; 
+        h = problem_data.h; 
         T = problem_data.T; 
         d = problem_data.d; 
         I_max = problem_data.I_max;
         V_max = problem_data.V_max; 
 
-        % Optional Inputs H_ineq, b_ineq
-        % where H_ineq x + b_ineq = 0
-        H_ineq = []; 
-        b_ineq = [];
-        if isfield(problem_data, 'H_ineq') || isfield(problem_data, 'b_ineq') 
-            assert(isfield(problem_data, 'H_ineq'),...
-                     'Need to supply H_ineq AND b_ineq');
-            assert(isfield(problem_data, 'b_ineq'),...
-                     'Need to supply H_ineq AND b_ineq');
-            H_ineq = problem_data.H_ineq;
-            b_ineq = problem_data.b_ineq; 
+        % Optional Inputs G_ineq, h_ineq
+        % where G_ineq x + h_ineq = 0
+        G_ineq = []; 
+        h_ineq = [];
+        if isfield(problem_data, 'G_ineq') || isfield(problem_data, 'h_ineq') 
+            assert(isfield(problem_data, 'G_ineq'),...
+                     'Need to supply G_ineq AND h_ineq');
+            assert(isfield(problem_data, 'h_ineq'),...
+                     'Need to supply G_ineq AND h_ineq');
+            G_ineq = problem_data.G_ineq;
+            h_ineq = problem_data.h_ineq; 
         end 
 
         n = length(omega);  
@@ -275,12 +311,12 @@ methods (Access = private)
         % inputs to speed up alot 
 
         % Check that others are the right size too
-        if ~isa(H, 'function_handle');  H = @(motor, gearbox) H;      end 
-        if ~isa(H_ineq, 'function_handle')
-                        H_ineq = @(motor, gearbox) H_ineq;            end 
-        if ~isa(b, 'function_handle');  b = @(motor, gearbox) b(:);   end 
-        if ~isa(b_ineq, 'function_handle')
-                        b_ineq = @(motor, gearbox) b_ineq(:);         end 
+        if ~isa(G, 'function_handle');  G = @(motor, gearbox) G;      end 
+        if ~isa(G_ineq, 'function_handle')
+                        G_ineq = @(motor, gearbox) G_ineq;            end 
+        if ~isa(h, 'function_handle');  h = @(motor, gearbox) h(:);   end 
+        if ~isa(h_ineq, 'function_handle')
+                        h_ineq = @(motor, gearbox) h_ineq(:);         end 
         if ~isa(T, 'function_handle');  T = @(motor, gearbox) T;      end 
         if ~isa(d, 'function_handle');  d = @(motor, gearbox) d(:);   end 
 
@@ -302,19 +338,19 @@ methods (Access = private)
         assert(size(T_test, 1) == n, 'Incorrect number of rows in T');
         assert(numel(d_test) == n || isempty(d_test), 'Incorrect d length');
 
-        H_test = H(test_motor, test_gearbox); 
-        b_test = b(test_motor, test_gearbox); 
-        assert(size(H_test, 2) == w || isempty(H_test),...
+        G_test = G(test_motor, test_gearbox); 
+        h_test = h(test_motor, test_gearbox); 
+        assert(size(G_test, 2) == w || isempty(G_test),...
                                          'Incorrect number of columns in H');
-        assert(size(H_test, 1) == length(b_test), 'Size H and b incompatible')
-        p = length(b_test); 
+        assert(size(G_test, 1) == length(h_test), 'Size H and b incompatible')
+        p = length(h_test); 
 
-        H_ineq_test = H_ineq(test_motor, test_gearbox); 
-        b_ineq_test = b_ineq(test_motor, test_gearbox); 
-        assert(size(H_ineq_test, 2) == w || isempty(H_ineq_test),...
-                            'Incorrect number of columns in H_ineq');
-        assert(size(H_ineq_test, 1) == length(b_ineq_test),...
-                         'Size H_ineq and b_ineq incompatible')
+        G_ineq_test = G_ineq(test_motor, test_gearbox); 
+        h_ineq_test = h_ineq(test_motor, test_gearbox); 
+        assert(size(G_ineq_test, 2) == w || isempty(G_ineq_test),...
+                            'Incorrect number of columns in G_ineq');
+        assert(size(G_ineq_test, 1) == length(h_ineq_test),...
+                         'Size G_ineq and h_ineq incompatible')
 
   
 
@@ -324,6 +360,7 @@ methods (Access = private)
             omega_dot = problem_data.omega_dot(:); 
             assert(length(omega_dot) == n,...
                     'omega and omega_dot must be same size'); 
+            omega_dot = round(omega_dot, nd);
         else 
             omega_dot = zeros(n, 1); % treat as zero
         end 
@@ -532,10 +569,10 @@ methods (Access = private)
         problem_data.M = M; 
         problem_data.r = r; 
         problem_data.beta = bet; 
-        problem_data.H = H; 
-        problem_data.H_ineq = H_ineq; 
-        problem_data.b = b; 
-        problem_data.b_ineq = b_ineq; 
+        problem_data.G = G; 
+        problem_data.G_ineq = G_ineq; 
+        problem_data.h = h; 
+        problem_data.h_ineq = h_ineq; 
         problem_data.T = T; 
         problem_data.d = d; 
         problem_data.omega = omega;
@@ -559,8 +596,6 @@ methods (Access = private)
             problem_data.beta_num = problem_data.beta_num;
             problem_data.beta_den = problem_data.beta_den; 
         end 
-
-  
     end % end validate problem data 
 
     function [sol_structs, cost_list, mincost, exitflag] = ...
@@ -652,17 +687,16 @@ methods (Access = private)
             %                   Print Outs to screen 
             %
             if  (j == 2) || (j == num_combinations) || ...
-                ((mod(j - 1, obj.settings.print_freq) == 0) && j > 1)
+                ((mod(j - 1, obj.settings.line_freq) == 0) && j > 1)
                 % Print a new line 
                 obj.vprintf(1, '\n'); 
             else 
                 % update the current line (by first removing)
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
             end 
-            disp_txt = sprintf('%13d%12d%12d%s%s%11.2f',...
-                    j, num_rep_solves, num_mi_solves,...
-                    sciprint(cutoff,'13.3'), sciprint(mincost, '13.3'),...
-                                 toc(start_tic)); 
+            disp_txt = sprintf('%13d%12d%12d%13.3e%13.3e%11.1f',...
+                                    j, num_rep_solves, num_mi_solves,...
+                                            cutoff, mincost, toc(start_tic)); 
             obj.vprintf(1, disp_txt); 
         end 
 
@@ -949,7 +983,16 @@ methods (Access = private)
     	[matrices, comp_torques, cutoff, index_map] = ...
                                      obj.build_matrices(motor, gearbox, bound); 
 
+        % TODO -- add small coefficient check in build matrices
+        % or round vels and other inputs when put it --- this is a better idea 
+        %if strcmp(obj.settings.solver, 'gurobi')
+        %    matrices = presolve(matrices, false(length(matrices.lb), 1));
+        %end
+
+        % TODO -- put cutoffs back in  -- debugging like this 
+        % because code needs to work without cutoffs 
         [y_sol, combo_cost] = obj.socp_solve(matrices, cutoff);
+
         [sol, bad_idxs, directions] = obj.parse_solution(y_sol,...
                                      index_map, comp_torques,  motor, gearbox); 
         exitflag = 0; % no issues with solve 
@@ -957,7 +1000,6 @@ methods (Access = private)
         % If mu/gamma decomposition inccorect at some indices, try to fix it 
         if ~isempty(bad_idxs)  % need to run next solve 
             init_cost = combo_cost; 
-
             [y_sol, combo_cost] = obj.clean_solution(y_sol, combo_cost, index_map,...
                                             matrices, comp_torques, motor, gearbox);
             [sol, bad_idxs_clean, directions] = obj.parse_solution(y_sol,...
@@ -974,433 +1016,6 @@ methods (Access = private)
         end 
         solve_time = toc(start_tic);
     end 
-
-
-
-        % Inputs: combo_cost (initial) directions, bad_idxs, index_map, matrices
-        %                                         motor, gearbox(for parsing sol)
-        % Outputs: sol, combo_cost, exitflag,  
-
-    function [sol, combo_cost, exitflag] = fix_gm_mu_errors(obj, init_cost,...
-                                cutoff, bad_bin_idxs, directions, index_map,...
-                                         matrices, comp_torques, motor, gearbox)
-    %
-    %
-    %   Inputs:
-    %       init_cost - cost of original solution without fixing any if the bin cals 
-    %
-
-        % could distinguish between direct fixing and iterative fixing 
-        exitflag = 1; % repeated solve -- will get set higher if fails 
-
-        % Augment the matrices 
-        dim_y = length(matrices.ub);
-
-        %nbi = length(bad_idxs); % nbi = number of bad indices 
-        %[~, shifted_idxs] = intersect(index_map.binary, bad_idxs, 'stable');
-
-
-        % NOTE: calling without cuttoffs here - if use cutoff and get 
-        % nan result its possible that its feasbile just over the cutoff
-        % NOTE: if treating our cutoffs as real though maybe still want a cutoff ohere 
-        % think on this more
-
-        % Try fixing the directions to the assumed directions 
-        matrices_bin_aug = matrices;    % a copy for augmenting 
-        matrices_bin_aug.lb(index_map.del(bad_bin_idxs)) = directions;
-        matrices_bin_aug.ub(index_map.del(bad_bin_idxs)) = directions;
-
-        [y_sol_new, combo_cost_new] = obj.socp_solve(matrices_bin_aug, inf);
-        [sol_new, bad_idxs_check] = parse_solution(obj, y_sol_new, index_map,...
-                                                comp_torques,  motor, gearbox); 
-        % 
-        %   If cost for fixed version is too different than cost 
-        %   for non-fixed version -- call the mixed int solver 
-        % 
-        cost_diff = combo_cost_new - init_cost; 
-        cost_diff_rel = cost_diff/min(abs(init_cost), abs(combo_cost_new));
-
-        % If trying to fix directions failed (inf cost) OR cost was sufficiently
-        % different from the initial cost (meaning that this feasible solution
-        % might not be close enough to optimal for the mixed integer problem)
-        if ((cost_diff_rel > obj.settings.reltol) && ...
-            (cost_diff > obj.settings.abstol)) ||  ~isempty(bad_idxs_check)
-
-        
-            init_bad_idx = bad_bin_idxs(1);     
-    
-
-            bin_indicator = false(length(matrices.ub), 1);
-            bin_indicator(index_map.del) = true;   % these values need to be solve binary 
-
-            matrices = presolve(matrices, bin_indicator); 
-
-
-            [sol, combo_cost, skip_mi_flag] = obj.infeasible_gmmu_search(init_cost, cutoff,....
-                            init_bad_idx, index_map, matrices, comp_torques,...
-                                                            motor, gearbox);
-
-
-
-            % Remove Fixed Augmentation from binary 
-            if ~skip_mi_flag
-
-                matrices.binary = bin_indicator;    % tell it to solve mixed int
-
-                disp('cost too diff call mixed into....')
-
-                % as a NOTE, sometimes the presolve for these on mixed int 
-                % completely does the trick 
-                % perhaps these are even LP presolve tricks 
-                % if so, if we can write our own presolver, we could 
-                % FIRST check a feasibility presolve 
-                % intesting to check if actially is just LP presolve 
-                % because presolve is frickin fast 
-                %
-                % 
-
-                [y_sol_mi, combo_cost_mi] = obj.socp_solve(matrices, cutoff);
-
-
-
-                %... For the mixed integer sol -- want to use cutoffs 
-                %
-                %   really just need to force delta values to binary 
-                % ... do we REALLY want to write a seperate B&B module??
-                % could always use the ECOS one but its pretty bad
-                disp('retuned out with mi sol')
-                % keyboard 
-
-                combo_cost = combo_cost_mi; 
-
-                exitflag = 2; 
-
-            elseif (combo_cost < cutoff)
-
-                
-                [y_sol_init, combo_cost_init] = obj.socp_solve(matrices, cutoff);
-
-                [sol_init, bad_idxs_init] = parse_solution(obj, y_sol_init, index_map,...
-                                                comp_torques,  motor, gearbox); 
-
-                %bin_indicator = false(length(matrices.ub), 1);
-                %bin_indicator(index_map.del) = true;   % these values need to be solve binary 
-                %matrices.binary = bin_indicator;  
-
-                %[y_sol_mi, combo_cost_mi] = obj.socp_solve(matrices, cutoff);
-                %
-                %[sol_mi, bad_idxs_mi] = parse_solution(obj, y_sol_mi, index_map,...
-                %                                comp_torques,  motor, gearbox); 
-
-                %display('sanity check')
-                %display(combo_cost)
-                %keyboard
-  
-            end 
-        else % ie. the costs were close enough 
-            combo_cost = combo_cost_new; 
-            sol = sol_new; 
-
-            disp('fixing worked :)')
-            display(directions); 
-
-
-        end 
-
-        if cost_diff == 0
-
-            disp('how zero -- zero zero?????')
-
-            keyboard
-        end 
-
-
-    end 
-
-
-    function [sol, combo_cost, skip_mi_flag] = ...
-                          infeasible_gmmu_search(obj, init_cost, cutoff, init_bad_idx,...
-                             index_map, matrices, comp_torques, motor, gearbox);
-
-        %bad_idxs_init = bad_idxs;  
-        %nbi_init = bad_idxs_init; 
-        %bad_idxs_comb = unique([bad_idxs; index_map.binary], 'stable');
-        %[~, shifted_idxs_comb] = ismember(bad_idxs_comb, index_map.binary); 
-        %nbi = length(shifted_idxs_comb);            
-        disp('infeas_gmmu_search')
-
-        skip_mi_flag = false; % will set to true if we prove infeasible 
-
-        num_bin = length(index_map.del); 
-
-
-        %del_aug_ub = ones(num_bin, 1);      % upper bound for feasible assignments 
-        %del_aug_lb = zeros(num_bin, 1);     % lower bound for feasible assignments
-
-
-        % ADD AN LP Presolve to hopefully speed things up - will need to profile 
-        % -- would require sectioning this out even further
-        % maybe make a function "infeasibility search"
-
-        % if after these steps the upper and lower bound of feasible assignments
-        % is the same AND we we have not created any new bad idxs, then
-        % there exists only 1 feasible mixed integer solution and we do 
-        % not need to call the mixed integer solver
-        % TODO -- clean way of moving this out to function
-        % so can call again in the worst case 
-
-
-
-        %next_idx = shifted_idxs_comb(1);
-
-        %for i = 1:nbi  % NOTE: combined bad idxs -- actually go through all of them 
-        
-
-        % Loop through all POTENTIALLY bad idxs, and break early if whatever criteria met 
-
-        combo_cost_one = inf; 
-        combo_cost_zero = inf; 
-
-        check_order_dbg = [];
-
-        %for i = 1:num_bin           % maybe switch to awhile 
-
-        max_outer_loops = 3; % check and profile 
-        outer_iter = 1;
-
-        % Will want to break before hit a cylce 
-        % if outer loops stop moving bounds -- TODO -- add a compare 
-        % check for cycles 
-        while outer_iter <= max_outer_loops  && ~skip_mi_flag % other cond?? 
-
-            num_checks = 0; 
-            del_checked = false(num_bin, 1); % indicator of if shifted idx has been checked 
-
-            % set a next idx 
-
-            if outer_iter == 1
-                next_idx = init_bad_idx;    % next one to check 
-            else 
-                if ~isempty(bad_idxs_zero) && ~isempty(bad_idxs_one) % neither empty
-                    % max below because may be empty
-                    % could prbably combine the next elseifs into this condiion
-                    if tau_error_one(1) > tau_error_zero(1)
-                        next_idx = bad_idxs_one(1);
-                    else 
-                        next_idx = bad_idxs_zero(1); 
-                    end 
-                elseif isempty(bad_idxs_zero) 
-                    next_idx = bad_idxs_one(1);
-                elseif isempty(bad_idxs_one)
-                    next_idx = bad_idxs_zero(1);
-                else 
-                    disp('shouildnt be posssible')
-                    keyboard
-                end 
-            end 
-
-            while ~isempty(next_idx) && (num_checks < num_bin) % may want to allow repeated checking 
-
-                % If we have a feas sol already (ie. one of the is not inf)
-                % then we should treat any varaible fixing that is higher as 
-                % infeasible 
-                feas_cost = min(combo_cost_zero, combo_cost_one);
-                feas_cutoff = feas_cost + 1e-5; % adding nomimal cost for tolerance
-
-
-                zero_infeas = false;
-                one_infeas = false; 
-
-                check_order_dbg = [check_order_dbg, next_idx];
-                del_idx = index_map.del(next_idx);  % true index in actual problem bounds 
-
-                
-                %display(num_checks)
-                %display(next_idx)
-                %display(del_idx)
-                if del_checked(next_idx)
-                    disp('trying to fix and index aleady fixed')     
-                    keyboard
-                    error('wwwaaaaa')
-                end 
-                del_checked(next_idx) = true;
-                
-
-                %
-                %       Try fixing it at zero
-                %
-                matrices.lb(del_idx) = 0; 
-                matrices.ub(del_idx) = 0; % upper bound at 0
-                [y_sol_zero, tmp_cost_zero] = obj.socp_solve(matrices, feas_cutoff);
-
-                if isinf(tmp_cost_zero)
-                    zero_infeas = true;     % this value cannot be zero 
-                    bad_idxs_zero = []; % dont bother parsing 
-                else
-
-                    [sol_zero, bad_idxs_zero, directions_zero, tau_error_zero] = ...
-                                parse_solution(obj, y_sol_zero, index_map,...
-                                                    comp_torques,  motor, gearbox);
-                    if ~isempty(bad_idxs_zero) % try to clean and repase 
-                        [y_sol_zero, tmp_cost_zero] = obj.clean_solution(y_sol_zero,...
-                                         inf, index_map, matrices, comp_torques,...
-                                                                 motor, gearbox);
-                        [sol_zero, bad_idxs_zero, directions_zero, tau_error_zero] = ...
-                                parse_solution(obj, y_sol_zero, index_map,...
-                                                    comp_torques,  motor, gearbox);
-                    end 
-
-                    if isempty(bad_idxs_zero)
-                        combo_cost_zero = tmp_cost_zero; 
-                    end 
-                end 
-                 
-
-                % other thing to note: any integer feasible solution can be used 
-                % as a cutoff 
-
-
-                %
-                %        Try fixing it at one 
-                %
-                matrices.lb(del_idx) = 1;    % lower bound at 1 
-                matrices.ub(del_idx) = 1;
-                [y_sol_one, tmp_cost_one] = obj.socp_solve(matrices, feas_cutoff);
-                if isinf(tmp_cost_one)
-                    one_infeas = true;
-                    bad_idxs_one = []; % dont bother parsing 
-                else 
-                    [sol_one, bad_idxs_one, directions_one, tau_error_one] = ...
-                                parse_solution(obj, y_sol_one, index_map,...
-                                                    comp_torques,  motor, gearbox);
-                    if ~isempty(bad_idxs_one) % trey to clean and reparse 
-                        [y_sol_ones, tmp_cost_one] = obj.clean_solution(y_sol_one,...
-                                         inf, index_map, matrices, comp_torques,...
-                                                                     motor, gearbox);
-                        [sol_one, bad_idxs_one, directions_one, tau_error_one] = ...
-                                parse_solution(obj, y_sol_one, index_map,...
-                                                    comp_torques,  motor, gearbox);
-                    end 
-                    
-                    if isempty(bad_idxs_one)  % int feas 
-                        combo_cost_one = tmp_cost_one; % might be old 
-                    end 
-                end  
-
-                if zero_infeas && one_infeas     % we've proven infeasibility 
-                    combo_cost = inf; 
-                    skip_mi_flag = true; 
-                    sol = struct(); 
-                    break; 
-                elseif zero_infeas   % but 1 is feasible 
-                    matrices.lb(del_idx) = 1;
-                    matrices.ub(del_idx) = 1; 
-                    [~, ~, next_idx] = find(bad_idxs_one.*~del_checked(bad_idxs_one),1);  
-                elseif one_infeas   % but zero is feasiblbe 
-                    matrices.lb(del_idx) = 0;
-                    matrices.ub(del_idx) = 0;
-                    [~, ~, next_idx] = find(bad_idxs_zero.*~del_checked(bad_idxs_zero),1);               
-                else    % both feasible -- but one may have no bad indices 
-                    matrices.lb(del_idx) = 0;
-                    matrices.ub(del_idx) = 1; 
-
-                    [i1, ~, next_idx_one] = find(bad_idxs_one.*~del_checked(bad_idxs_one),1);  
-                    [i0, ~, next_idx_zero] = find(bad_idxs_zero.*~del_checked(bad_idxs_zero),1);  
-
-                    % max below because may be empty
-                    if max([tau_error_one(i1),0]) > max([tau_error_zero(i0),0])
-                        next_idx = next_idx_one;
-                    else 
-                        next_idx = next_idx_zero; 
-                    end 
-                end 
-
-                tmp_cost = min(combo_cost_one, combo_cost_zero); 
-                cost_diff = tmp_cost - init_cost;
-                cost_diff_rel = cost_diff/min(abs(tmp_cost), abs(init_cost));
-                
-                if (cost_diff_rel < obj.settings.reltol) || ...
-                                            (cost_diff < obj.settings.abstol) 
-
-                    close_enough = true;
-                else 
-                    close_enough = false; 
-                end 
-
-                % TODO -- add costs checks -- if cost close enough to init cost 
-                % ONLY for an integer feasibe then done. may not need though? 
-
-                % if we get here at all, it means at least 0 or 1 feasible on most recent 
-                % also, costs ONLY get worse as we fix more vars
-                % might have checked them all but not actually a int feas
-                if (isempty(bad_idxs_one) && isempty(bad_idxs_zero)) || close_enough  %  WE HAVE A SOLUTION THATS EQUIVALENT TO AN INTEGEVER FEASIBILE SOLUTON  
-                    skip_mi_flag = true; % we have found a feasible mixed int solutino
-                    % that is not worse than any other feasible 
-                    % NOTE: coulld be both feasible in which case pick lowest cost 
-                    if tmp_cost_zero <= tmp_cost_one 
-                        sol = sol_zero; 
-                        combo_cost = tmp_cost_zero; 
-                    else % combo_cost_one < combo_cost_zero
-                        sol = sol_one; 
-                        combo_cost = tmp_cost_one; 
-                    end 
-                    disp('can skip - over here!!!!!!!!')
-                    %keyboard
-                    break;
-                    % NOTE would be good to perform a sanity check by fixinf the 
-                    % vars that this does in fact correspond to a true mixed int feasible soluib
-                end 
-                % probliem with current setup -- if an index could be feasible 
-                % either way, one we move past it, it could come up again 
-                % ok lets say this did happen, we never get it twice in a row 
-                % should we just deal with getting it again? we only ever make
-                % the problem tighter -- however, consdier a case where lets say
-                % 2 indices independanty could be ambiguous with same costs -- would keep bouncing between them 
-                % this would be a case where mixed integer is really the only way 
-                % 
-
-                % also adding checks for cost
-                
-
-                num_checks = num_checks + 1; 
-
-            end 
-
-            outer_iter = outer_iter + 1; 
-        end 
-
-
-        if ~skip_mi_flag  % still false 
-            sol = struct([]); 
-            combo_cost = nan; 
-            display(check_order_dbg)
-            disp('wasnt able to prove shgit ')
-            keyboard 
-        end 
-
-        %{
-        if ~any(del_aug_ub - del_aug_lb) % if bounds same - we have out sol
-            % if these are the same it means we made it all the way 
-            % through the bad idxs and only found 1 feasible solution
-            % if this new solution doesnt create any new bad idxs we are done 
-            % NOTE: this now reduendatnt with the parsing done above 
-            [sol_new, bad_idxs_check, directions_check, tau_error_check] = ...
-                            parse_solution(obj, y_sol_new, index_map,...
-                                                comp_torques,  motor, gearbox);
-            sol = sol_new; 
-            combo_cost = combo_cost_new; 
-
-            if isempty(bad_idxs_check)  % solution is mixed-integer feasible 
-                skip_mi_flag = true; 
-            end 
-        elseif ~skip_mi_flag % We have not shown infeasible nor that only 1 sol exists 
-            sol = struct([]); 
-            combo_cost = nan;   
-            disp('boo')
-        end  
-        %} 
-
-    end % end infeasible gmmu search 
 
 
 
@@ -1455,10 +1070,10 @@ methods (Access = private)
         I_l = max(-pd.I_max, (-pd.V_max - k_t*ratio*omega)/motor.R);
         %Hmm, and if negative? 
 
-        H = pd.H(motor, gearbox);
-        b = pd.b(motor, gearbox);
-        H_ineq = pd.H_ineq(motor, gearbox);
-        b_ineq = pd.b_ineq(motor, gearbox); 
+        G = pd.G(motor, gearbox);
+        h = pd.h(motor, gearbox);
+        G_ineq = pd.G_ineq(motor, gearbox);
+        h_ineq = pd.h_ineq(motor, gearbox); 
          % TODO -- remove confusion between A/b in solving socp and H/b in problem setuo
          % probablyt keep A/b and rename the 'b' in the problem setup context 
 
@@ -1484,16 +1099,9 @@ methods (Access = private)
         %
         % 		Friction/Drag and Inertia Compensation
         %
-
-        % TODO -- whats the best general way to handle static friction
-        % Should there be a call to a function which determines 
-        % friction model based of settings? 
-        
-
-
         % tau_motor_friction is JUST kinetic 
+        % TODO -- static friction business 
         [tau_motor_friction, tau_static_friction] = obj.friction_model(motor, gearbox); 
-
 
         % Since BEFORE gearbox only multiplied by ratio NOT ratio^2 
         % will effectively get multiplied by ratio again through gearbox
@@ -1806,18 +1414,18 @@ methods (Access = private)
             lb(sf_idxs) = -tau_static_friction; 
         end 
 
-        if ~isempty(H)
-            A_eq_H = sparse([], [], [], size(H, 1), dim_y, nnz(H));
-            A_eq_H(:, x_idxs) = -H;   % note signs
-            b_eq_H = b; 
+        if ~isempty(G)
+            A_eq_G = sparse([], [], [], size(G, 1), dim_y, nnz(G));
+            A_eq_G(:, x_idxs) = -G;   % note signs
+            b_eq_G = h; 
         else 
-            A_eq_H = [];
-            b_eq_H = [];
+            A_eq_G = [];
+            b_eq_G = [];
         end
 
         % very slow 
-        A_eq = [A_eq_tau_x; A_eq_other; A_eq_H]; 
-        b_eq = [b_eq_tau_x; b_eq_other; b_eq_H]; % NOTE signs 
+        A_eq = [A_eq_tau_x; A_eq_other; A_eq_G]; 
+        b_eq = [b_eq_tau_x; b_eq_other; b_eq_G]; % NOTE signs 
 
         % there is some processing to do here for if 
         % general constraints are SOCP OR QCP or simple inequality 
@@ -2013,15 +1621,15 @@ methods (Access = private)
             error('Invalid Problem type ');
         end 
 
-        % Add the linear inequalities in H_ineq, b_ineq
-        if ~isempty(H_ineq)
+        % Add the linear inequalities in G_ineq, h_ineq
+        if ~isempty(G_ineq)
         	% Add these to A_ineq other 
-        	A_ineq_H = sparse([], [], [], size(H_ineq, 1), dim_y, nnz(H_ineq));
-        	A_ineq_H(:, x_idxs) = H_ineq; 
-        	b_ineq_H = b_ineq; 
+        	A_ineq_G = sparse([], [], [], size(G_ineq, 1), dim_y, nnz(G_ineq));
+        	A_ineq_G(:, x_idxs) = G_ineq; 
+        	b_ineq_G = h_ineq; 
 
-        	A_ineq_extra = [A_ineq_extra; A_ineq_H];
-        	b_ineq_extra = [b_ineq_extra;  -b_ineq_H]; % NOTE signs 
+        	A_ineq_extra = [A_ineq_extra; A_ineq_G];
+        	b_ineq_extra = [b_ineq_extra;  -b_ineq_G]; % NOTE signs 
         end  
 
         %% ----- Incorporate Actual Cost --------------
@@ -2090,7 +1698,7 @@ methods (Access = private)
     	compensation_torques.tau_gearbox_inertia = tau_gearbox_inertia;
     	compensation_torques.tau_static_friction = tau_static_friction; % scalar
 
-    end % 
+    end % end build_matrices
 
 
 
@@ -2120,18 +1728,15 @@ methods (Access = private)
         % If Actual solution exists....
         k_t = motor.k_t; 
         ratio = gearbox.direction .* gearbox.ratio; 
-
         eta = gearbox.efficiency; 
 
         I_comp = comp_torques.I_comp; 
 
         sol.I = y_sol(index_map.I); 
         sol.x = y_sol(index_map.x); 
-
         sol.I_comp = I_comp; 
 
         I_shift = sol.I - I_comp; 
-
 
         % TODO -- remove some unnuessary ronse 
         sol.I_shift = I_shift;
@@ -2151,12 +1756,13 @@ methods (Access = private)
             sol.I_mu = y_sol(index_map.mu);
             sol.tau = ratio*k_t*eta*(sol.I_gm) + (ratio*k_t/eta)*(sol.I_mu)...
                      + ratio*static_motor_friction - tau_gearbox_inertia;
+            gm = y_sol(index_map.gm); 
+            mu = y_sol(index_map.mu);
         else 
             sol.tau = ratio*k_t*(I_shift) ...
                     + ratio*static_motor_friction - tau_gearbox_inertia;
         end 
 
-        Isq = y_sol(index_map.Isq);
 
 
         % calculate compensation torque 
@@ -2180,37 +1786,13 @@ methods (Access = private)
 
         % Just electromechanical 
         sol.tau_em = ratio*(tau_m.*(eta*driving + driven/eta + zero_vel)); 
-
         sol.driving = driving; 
-
-        % TODO Add debug to settings 
-        
-
-        % omega.*compensation torque goes negative (need to go through proof)
-
-      
-        gmmu_tol = 1e-3; 
-        gm = y_sol(index_map.gm); 
-        mu = y_sol(index_map.mu);
-
-        min_gmmu_all = min(abs(gm), abs(mu));
 
 
         if isfield(index_map, 'binary')
-
-
-            min_gmmu_sanity = min_gmmu_all;
-            min_gmmu_sanity(index_map.binary) = []; 
-
-            if max(min_gmmu_sanity) > 1e-3 % once get below rho -- these has very small impact 
-                disp('concering???') 
-                disp(max(min_gmmu_sanity))
-                
-                % unclear how this happens -- and may need to adjust rho?    
-
-                %keyboard
-            end 
-
+            % NOTE: may decide to check on all indices
+            min_gmmu_all = min(abs(gm), abs(mu));
+   
             % Only pick out the indices we care about 
             gm_bin = gm(index_map.binary);
             mu_bin = mu(index_map.binary); 
@@ -2220,26 +1802,13 @@ methods (Access = private)
             sol.del = y_sol(index_map.del);
 
 
-            % Only really concerned with where decomp may be bad (aug_idxs)
-            
-            gmmu_bad_idxs = find(min_gmmu > gmmu_tol); 
+            % Only really concerned with where decomp may be bad (aug_idxs)            
+            gmmu_bad_idxs = find(min_gmmu > obj.solve_settings.gmmu_tol); 
             bad_vals = min_gmmu(gmmu_bad_idxs);
             bad_bin_idxs = gmmu_bad_idxs; 
             
-            % ... only works with the added Rotated SOC Perspective Constraints 
-            %{
-            del_error = abs(sol.del - round(sol.del));
-            bad_bin_idxs = find(del_error > 1e-3);
-            bad_vals = del_error(bad_bin_idxs);
-
-            %} 
-
-            % other option would be to sort by expected influence on the problem itself 
-
-
+          
             [~, reindex] = sort(bad_vals, 'descend'); 
-
-
 
             bad_bin_idxs = bad_bin_idxs(reindex); % now sorted 
             directions = init_directions(reindex); 
@@ -2250,58 +1819,18 @@ methods (Access = private)
             % index out to return 
             tau_error = tau_error(index_map.binary(bad_bin_idxs));
             tau_error = tau_error(reindex);
-
         end 
+
         
 
-        %directions = driving(bad_idxs); 
-
-        % TODO -- compare with bad idxs from tau check
-
-
-        %{
-        tau_error = tau_check - sol.tau_em;     
-        tau_tol = 1e-3; 
-        tau_bad_idxs = find(abs(tau_error) > tau_tol);
-
-        if isempty(bad_idxs) && ~isempty(tau_bad_idxs)
-            % ok, well with huge gear ratios sure 
-            disp('curious,,,,')
-            %keyboard
-        end 
-
-
-        if obj.settings.debug 
-            % TODO -- add more feautures to solution
-        end 
-        %} 
-
-        %{
-        alt_dirs = (sign(I_shift(bad_idxs) .* obj.omega(bad_idxs)) + 1)/2;
-        tau_m_sol = motor.k_t*((eta*gm) + (mu/eta)); 
-
-
-        if ~isempty(directions) 
-            if any(directions - alt_dirs)
-                disp('diff diers')
-                keyboard
-            end 
-        end 
-        %}
-
-        % If we were to keep 
-
-
-
-    end 
+    end % end parse_solution
 
     % this needs matrices but parse normally wouldnt -- could call this after parse 
     % if there is a problem
     function [new_sol, new_cost] = clean_solution(obj, y_sol, init_cost, index_map,...
                                                      matrices, comp_torques, motor, gearbox)
 
-           
-
+        
         dim_y = length(y_sol);
         eta = gearbox.efficiency;
         ratio = gearbox.direction .* gearbox.ratio;
@@ -2309,15 +1838,16 @@ methods (Access = private)
         I_comp = comp_torques.I_comp;
         omega = obj.problem_data.omega; 
 
-        gmmu_tol = 1e-3;    %  TODO -- link up with settings 
 
         % find initial bad indices
         I_init = y_sol(index_map.I);
         gm_init = y_sol(index_map.gm);
         mu_init = y_sol(index_map.mu); 
         min_gmmu = min(abs(gm_init), abs(mu_init));
-        bad_idxs = find(min_gmmu > gmmu_tol);        % absolute indexing 
+        bad_idxs = find(min_gmmu > obj.solve_settings.gmmu_tol);        % absolute indexing 
 
+
+        % and maybe dont alter others that are already close 
 
 
         % We will fix the output torques to what they were 
@@ -2336,32 +1866,43 @@ methods (Access = private)
         gm = (tau_comp .* driving)/(ratio*eta*k_t);
         mu = (tau_comp .* driven * eta)/(ratio*k_t);
         I = gm + mu + comp_torques.I_comp; 
-        Isq = I.^2;
         s = (gm - mu).^2; 
         gmsq = gm(index_map.binary).^2;
-        musq = mu(index_map.binary).^2;
         del = driving(index_map.binary); 
-        sig = 1 - del; 
 
 
-        % TODO 
+        %fix_idxs = false(length(I), 1); 
+        %fix_idxs(bad_idxs) = true; % dont both 'cleaning' where already good enough 
+        %fix_idxs = and(fix_idxs, moving);  % dont clean where static 
+
+        %% Check if making this adjustment might lead to numerica tolerancing 
+        % issue on current at indices where the initial gm/mu decomposition 
+        % was good enough in the first place 
+
+        fix_idxs = moving; 
+
+        I_ub_bad = [I > matrices.ub(index_map.I) + obj.solve_settings.feastol];  
+        I_lb_bad = [I < matrices.lb(index_map.I) - obj.solve_settings.feastol]; 
+        I_bad = or(I_ub_bad, I_lb_bad);
+        gmmu_good = [min_gmmu < obj.solve_settings.gmmu_tol]; 
+        ignore = and(I_bad, gmmu_good); 
+        fix_idxs = and(moving, not(ignore));
+
         %% 
-        tmp_sol(index_map.I(moving)) = I(moving);
-        tmp_sol(index_map.gm(moving)) = gm(moving);
-
-        tmp_sol(index_map.tau(moving)) = tau(moving); 
-
-        tmp_sol(index_map.s) = s; 
-        tmp_sol(index_map.del) = del;
-
-        tmp_sol(index_map.gmsq) = gmsq;
+        tmp_sol(index_map.I(fix_idxs)) = I(fix_idxs);
+        tmp_sol(index_map.gm(fix_idxs)) = gm(fix_idxs);
+        tmp_sol(index_map.tau(fix_idxs)) = tau(fix_idxs); 
+        % 
+        %fix_idxs_shift = ismember(index_map.binary, find(fix_idxs));
+        %tmp_sol(index_map.del(fix_idxs_shift)) = del(fix_idxs_shift);       % shifted 
 
         % removing redundancies helps numerical issues 
+        %tmp_sol(index_map.s(fix_idxs)) = s(fix_idxs); 
         %tmp_sol(index_map.mu) = mu; 
         %tmp_sol(index_map.sig) = sig;
         %tmp_sol(index_map.Isq) = Isq;
         %tmp_sol(index_map.musq) = musq; 
-
+        %tmp_sol(index_map.gmsq(fix_idxs_shift)) = gmsq(fix_idxs_shift);     % shifted
 
         not_nan_idxs = find(~isnan(tmp_sol)); 
 
@@ -2377,7 +1918,6 @@ methods (Access = private)
         % additional use defined things 
         %clean_matrices.quadcon = struct([]);
 
-        feasTol = 1e-5;   % TODO -- link up with solver settings 1e-6 works without static friction
 
         % Want to fix all of the values we decided on above 
 
@@ -2385,11 +1925,12 @@ methods (Access = private)
 
         % Need a feas tol here because solvers will sometimes slightly violate
         % the constraints 
-        ub_bad_idxs = find(tmp_sol > matrices.ub + feasTol);  
-        lb_bad_idxs = find(tmp_sol < matrices.lb - feasTol); 
+        %feasTol = 1e-5;   % TODO -- link up with solver settings 1e-6 works without static friction
+
+        ub_bad_idxs = find(tmp_sol > matrices.ub + obj.solve_settings.feastol);  
+        lb_bad_idxs = find(tmp_sol < matrices.lb - obj.solve_settings.feastol); 
 
         clean_matrices = matrices; 
-
         if any(ub_bad_idxs) || any(lb_bad_idxs)
  
   
@@ -2409,6 +1950,8 @@ methods (Access = private)
                     % issure with torques -- since the torques have been 
                     % fixed in the above process 
                     % this indicates a tolerancing error 
+                    disp('tolerancing error on tau')
+                    keyboard
                 else 
                     disp('aaaa ---------------------- ')
                     keyboard
@@ -2418,16 +1961,19 @@ methods (Access = private)
             % now should be cleanable without violating bounds however 
             % may create new bad idxs 
 
-            % do a recursive clean you made man -- make sure to set base
             % case or recusrion limtis 
+            disp('fiixxxxxxx')
+            keyboard
             [new_sol, new_cost, result] = obj.socp_solve(clean_matrices, inf);
 
-            disp('about to make recurs')
-
+            
+            disp('about to make recursive clean')
+            keyboard
 
             % NOTE: making the recursive call with initial matrices
             [y_rec, rec_cost] = obj.clean_solution(new_sol, init_cost, index_map,...
                                                  matrices, comp_torques, motor, gearbox); 
+
 
             [sol_rec, bad_idxs_rec] = obj.parse_solution(y_rec, index_map,...
                                                     comp_torques,  motor, gearbox);
@@ -2444,16 +1990,16 @@ methods (Access = private)
                 new_cost =  init_cost;
             end 
         else 
-            %ff = 1e-4; % fudge factor on specified bounds to help with numerics
             ff = 1e-3; % fudge factor on specified bounds to help with numerics
             % Anything that was fixed to zero we want to keep numerically zero
             % for the rest we will loosen the bounds a little bit to help with numerical issues
-            tmp_lb = max(matrices.lb, tmp_sol -  [tmp_sol ~= 0]*ff);
-            tmp_ub = min(matrices.ub, tmp_sol +  [tmp_sol ~= 0]*ff);
+            tmp_lb = max(matrices.lb, tmp_sol - [tmp_sol ~= 0]*ff);
+            tmp_ub = min(matrices.ub, tmp_sol + [tmp_sol ~= 0]*ff);
 
 
             clean_matrices.lb(not_nan_idxs) = tmp_lb(not_nan_idxs);
             clean_matrices.ub(not_nan_idxs) = tmp_ub(not_nan_idxs);
+
 
             [new_sol, new_cost, result, model] = obj.socp_solve(clean_matrices, inf);
 
@@ -2464,6 +2010,18 @@ methods (Access = private)
                 iis = gurobi_iis(model)
                 keyboard 
             end 
+
+            cost_diff = new_cost - init_cost;
+            cost_diff_rel = cost_diff/min(abs([new_cost, init_cost]));
+
+            % TODO using 0.01 here calling this parameter a reltol might not 
+            % be the most accurate -- should still be setable and 1% is fine 
+            % may just need to add another parameter entirely
+            if (cost_diff > obj.solve_settings.abstol) && ...
+                                    (cost_diff_rel > 0.01)
+                disp('toooooooooooo diff')
+                keyboard
+            end
         end  
     end 
 
@@ -2540,7 +2098,6 @@ methods (Access = private)
     %   'gurobi solve' file for consistency
     %
         model = [];
-
         Q_cost = matrices.Q_cost;
         c_cost = matrices.c_cost;
         c_rho_aug = matrices.c_rho_aug;
@@ -2554,139 +2111,36 @@ methods (Access = private)
         quadcon = matrices.quadcon;
         dim_y = length(lb);
 
-
-        if isfield(matrices, 'binary') && nnz(matrices.binary) > 0
-            mixed_integer = true;
-        else 
-            mixed_integer = false; 
-        end 
-
-        if strcmpi(obj.settings.solver, 'gurobi')  || mixed_integer
-
-            %% Gurobi Model 
-        
-            sense = [repmat('=', length(b_eq), 1); repmat('<', length(b_ineq), 1)]; 
-            A_all = sparse([A_eq; A_ineq]); 
-            b_all = [b_eq; b_ineq]; 
-
-            model.A = A_all;
-            model.Q = Q_cost; 
-            model.rhs = b_all; 
-            model.sense = sense;   % equality/inequality sense 
-            model.obj = c_cost;  % linear objective term
-            model.objcon = beta0; % constant objective term 
-            model.lb = lb; 
-            model.ub = ub; 
-
-            model.quadcon = quadcon;
-            model.vtype = repmat('C', dim_y, 1); % all continuous variables 
-            model.modelsense = 'min'; % minimize or maximize 
-
-
-            % TODO -- make a separete functoin 
-            % we call regardless of solver???? YAS 
-
-            % TODO -- logging? 
-            % TODO -- a way for users to change solver params 
-            % like tolerances (--- 'Advanced Users only ----')
-            params.DualReductions = 0; % To help debug inf_or_unbd
-            params.BarHomogeneous = 1; % NOTE: maybe ONLY do this for binary aug problems if costs use speed 
-            params.cutoff = cutoff; 
-            params.outputflag = 0;      % TODO OPTIONAL FOR LOGGING TO FILE TOO -- IF IN DEBUG MODE 
-
-            params.FeasibilityTol = obj.solve_settings.feastol;
-            params.OptimalityTol = obj.solve_settings.abstol; 
-            %params.BarConvTol = 1e-9; % defaulat 1e-8 
-            %params.BarQCPConvTol = 1e-9; % default 1e-6
-
-
-            if strcmpi(obj.settings.solver, 'gurobi') 
-                if mixed_integer
-                    %params.presolve = 0;
-                    %params.FeasibilityTol = 1e-2; 
-                    params.IntFeasTol = 1e-4; % default 1e-5, max 1e-1, min 1e-9 
-                    model.vtype(matrices.binary) = 'B'; 
-                    params.outputflag = 1; % for debug 
-                end 
-            else 
-                error('Havent written external B&B module yet');
-            end 
-
-            result = gurobi(model, params); 
-
-            if mixed_integer
-                %display(result)
-                disp('lll--------------------------------- MIXED INT SOLVED ========')
-            end 
-            % TODO -- clean up this switch so not as much code reused 
-            % GO THROUGH ALL STATUS CODES             
-            % TODO https://www.gurobi.com/documentation/9.0/refman/optimization_status_codes.html
-
-            switch result.status 
-
-                case 'OPTIMAL'
-                    y_sol = result.x; 
-                    combo_cost = result.objval; % NOTE: not subtracting off augmented cost 
-                case 'SUBOPTIMAL'
-
-
-                    y_sol = result.x; 
-                    % subtract off cost augmentation 
-                    combo_cost = result.objval; 
-
-                    %if combo_cost <= cutoff
-
-                    % TODO -- should this be the condition? what about subotimal solves on fractional problems
-                    if (result.objval <= cutoff) && strcmp(obj.problem_type, 'standard')
-
-                        warning(['Solver returned suboptimal solution',...
-                             ' may need to loosen tolerances']);
-
-                        display(result)
-                        display(combo_cost)
-                        %keyboard
-                    
-                    else 
-                        y_sol = nan(dim_y, 1);
-                        combo_cost = inf; % returned "suboptimal" but really cutoff 
-                    end 
-                case 'NUMERIC'
-                    disp('yoooooooooooooooooooooooooooooooooooooooooooooooo')
-                    keyboard 
-                case 'UNBOUNDED'
-
-                    error(['Unbounded problem encountered',...
-                                ' Check that problem is well posed']);
-                case 'INF_OR_UNBD'
-                    y_sol = nan(dim_y, 1);
-                    combo_cost = inf;
-                    %warning('Problem may be unbounded\n'); % WHY NOT PRINTIG? 
-                otherwise  % CUTOFF / INF_OR_UNBD 
-                    y_sol = nan(dim_y, 1); 
-                    combo_cost = inf; 
-            end 
+        if strcmpi(obj.settings.solver, 'gurobi') 
+            [result, model] = gurobi_solve(Q_cost, c_cost, beta0, A_eq, b_eq,...
+                                             A_ineq, b_ineq, quadcon, lb, ub,...
+                                                    cutoff, obj.solve_settings);
         elseif strcmpi(obj.settings.solver, 'ecos') || ...
                             strcmpi(obj.settings.solver, 'sedumi')
-
-            [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc] = prep_socp(Q_cost,...
-                        c_cost, beta0, A_eq, b_eq, A_ineq, b_ineq, quadcon,...
-                                         lb, ub,  cutoff);
             if strcmpi(obj.settings.solver, 'ecos')
-                result = ecos_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc);
+                [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
+                             prep_socp(Q_cost, c_cost, beta0, A_eq, b_eq,...
+                        A_ineq, b_ineq, quadcon, lb, ub,  cutoff, 'ecos');
+                [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp,...
+                            G_soc, h_soc, G_rsoc, h_rsoc, obj.solve_settings);
             else
-                result = sedumi_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc); 
-            end 
-
-            % ...maybe copy outside if for reuse? 
-            if ~isinf(result.objval)
-                y_sol = result.x; 
-                combo_cost = result.objval; 
-            else
-                y_sol = nan(dim_y, 1); 
-                combo_cost = inf;  
+                [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
+                             prep_socp(Q_cost, c_cost, beta0, A_eq, b_eq,...
+                        A_ineq, b_ineq, quadcon, lb, ub,  cutoff, 'sedumi');
+                [result, data] = sedumi_solve(c, A_eq, b_eq, A_lp, b_lp,...
+                            G_soc, h_soc, G_rsoc, h_rsoc, obj.solve_settings); 
             end 
         else
             error('invalid solver'); % shouldnt be possible 
+        end 
+
+                    % ...maybe copy outside if for reuse? 
+        if ~isinf(result.objval)
+            y_sol = result.x; 
+            combo_cost = result.objval; 
+        else
+            y_sol = nan(length(lb), 1); 
+            combo_cost = inf;  
         end 
 
     end % socp_solve
@@ -2707,11 +2161,9 @@ methods (Access = private)
 
 end % end private methods 
 
-
-
-
 %==============================================================================
 end % end CLASSDEF
+
 
 %%%% Non Class Methods 
 
@@ -2736,8 +2188,13 @@ function settings = validate_settings(init_settings)
     if isfield(init_settings, 'verbose')
         settings.verbose = init_settings.verbose;         
     end
+
     if isfield(init_settings, 'print_freq')
         settings.print_freq = init_settings.print_freq; 
+    end
+
+    if isfield(init_settings, 'line_freq')
+        settings.line_freq = init_settings.line_freq; 
     end
 
     valid_solvers = {'gurobi', 'ecos', 'sedumi'};
@@ -2791,17 +2248,16 @@ end
 function def_settings = default_settings()
     def_settings = struct('solver', 'gurobi',...
                            'verbose', 1,...
-                           'print_freq', 500);
-
- 
+                           'line_freq',500,... % how often to print new line 
+                           'print_freq', 1);  % how often to update line 
 end 
 
 function def_solve_settings = default_solve_settings()
     def_solve_settings = struct('rho', 1e-4,...
                                 'gmmu_tol', 1e-3, ... % 1 ma 
-                                'feastol', 1e-5,...
+                                'feastol', 1e-5,...    % 1e-5
                                 'reltol', 1e-3,... % 0.1 percent optimality
-                                'abstol', 1e-7,...  % TODO hmm, compare with ecos 
+                                'abstol', 1e-3,...  % if tighter, sometimes issues
                                 'qcvx_reltol', 1e-3,...
                                 'qcvx_abstol', 1e-7);
 
@@ -2813,7 +2269,7 @@ function [test_motor, test_gearbox] = test_motor_gearbox()
     test_motor = struct('key', 'none',...
                         'manufacturer', 'none',...
                         'ID', 'none',...
-                        'type', 'DC',...        % TODO -- double check if this can matter
+                        'type', 'DC',...       
                         'V', 1,...
                         'k_t', 1,...
                         'R', 0.1,...
@@ -2834,7 +2290,7 @@ function [test_motor, test_gearbox] = test_motor_gearbox()
     test_gearbox = struct('key', 'none',...
                           'manufacturer', 'none',...
                             'ID', 'none',...
-                            'type', 'planetary',...        % TODO -- double check if this can matter
+                            'type', 'planetary',...        
                             'stages', 1,...
                             'ratio', 2,...
                             'mass', 0.1,...
@@ -2845,146 +2301,3 @@ function [test_motor, test_gearbox] = test_motor_gearbox()
                             'max_cont_torque', inf); 
 end 
 
-% TODO -- remove this or come up with better ptinting system (probs juist always scinot)
-function str = sciprint(num, specifier)
-    fstr = sprintf(['%',specifier,'f'], num);
-    estr = sprintf(['%',specifier,'e'], num);
-    if length(fstr) <= length(estr) && ((num > 1e-2) || num == 0)
-        str = fstr;
-    else 
-        str = estr; 
-    end 
-end 
-    %{
-     function ranked_combos = apply_rankings(obj, combos)
-    %
-    %
-    %
-    
-        % if no rankings, just return
-        if nnz(obj.ranking_matrix) == 0
-            ranked_combos = combos;
-            return;
-        end 
-
-        ranked_combos = zeros(size(combos) + [0, 1]);  % extra col 
-        num_combos = size(combos, 1);
-        % O(n) -- get all the rankings  
-        for j = 1:num_combos
-            motor_idx = combos(j, 1);
-            gear_idx = combos(j, 2);  
-            ranking = obj.ranking_matrix(motor_idx, gear_idx); 
-            ranked_combos(j, :) = [ranking, motor_idx, gear_idx]; 
-        end 
-        % O(nlogn) -- sort by the rankings 
-        [~, sort_idxs] = sort(ranked_combos(:, 1)); 
-        ranked_combos = ranked_combos(sort_idxs, :); 
-    end 
-
-
-
-    function [combo_list] = get_combinations(obj)
-    %**********************************************************************
-    % Method: get_combinations 
-    % 
-    % Inputs: 
-    %       None
-    %
-    % Outputs:
-    %       N x 2 array where N is the number of combinatioms. First col 
-    %       gives index of motor in motor table
-    %       and second col gives the index of the gearbox. For direct 
-    %       drive (no gearbox) a 0 is used in the second column as a flag
-    %       for no gearbox 
-    %
-    %   Added:   
-    %**********************************************************************    
-
-        % NOTE if there are filter criteria like motor velocity 
-        % that needs to be included here because function of both 
-        % motor max speed AND gear ratio
-
-        %if obj.settings.verbose; fprintf('\nGetting combinations...'); end 
-
-
-        % Loop through motors (NOTE: list will typically be filtered before)
-        num_motors = size(obj.motors, 1);
-        combo_list = {}; % start as cell because dont know how big it needs to be 
-        for i = 1:num_motors 
-            motor_idx = i; % For now --- later -- use filtered idxs 
-            % indices in gear table 
-            compatible_gears = cell2mat(obj.motors.('gearboxes')(motor_idx)); 
-            for j = 1:numel(compatible_gears)
-                % TODO: if 'filtered' this combo may be excluded 
-                gear_idx = compatible_gears(j); 
-                combo_list{end + 1, 1} = [motor_idx, gear_idx]; 
-            end 
-        end 
-        % convert cell to N x 2 array 
-        combo_list = cell2mat(combo_list); 
-
-        %combo_list = combo_list(1:min(length(combo_list), 400), :); 
-        %warning('remember to comment this debug thing out limiting combos to 200')
-    
-
-    end 
-    %} 
-
-
-    %{
-    function new_combos = velocity_filter(obj, combos)
-    %
-    %
-    %
-        motors = table2struct(obj.motors);
-        gears = table2struct(obj.gearboxes);
-
-        num_init_combos = size(combos, 1); 
-        obj.vprintf(1, 'Found %d initial feasible combinations\n', num_init_combos);
-
-        % Starting at end of combo list and remove based on velocty 
-        max_output_vel = max(abs(obj.omega)); 
-
-        for j = length(combos):-1:1
-            motor_idx = combos(j, 1); 
-            gear_idx = combos(j, 2); 
-
-            max_motor_vel = max_output_vel * gears(gear_idx).ratio;  
-            if max_motor_vel > motors(motor_idx).omega_max
-                combos(j, :) = []; % clear it out 
-            end 
-        end 
-        new_combos = combos; 
-
-
-        num_updated_combos = size(combos, 1); 
-        obj.vprintf(1, 'Filtering by max velocity removed: %d combinations\n',...
-                            num_init_combos - num_updated_combos);
-    end 
-    %} 
-
-
-
-    %{
-    function update_rankings(obj, cost_list, combos)
-    %
-    %
-    %
-
-        % May be called by user so add validation
-        cost_list = cost_list(:); 
-
-        assert(size(combos, 1) == length(cost_list),...
-                 'Number of combinations must match length of costs');
-        assert(size(combos, 2) == 2, 'Combinations must be 2xN matrix'); 
-
-        [~, rank_idxs] = sort(cost_list);   % Need to index this back in 
-        tmp_table = [cost_list, combos];
-        obj.rankings = tmp_table(rank_idxs, :); 
-
-        % row - motor idx, col - gear idx, val = ranking - 0 is flag for inf 
-        ranking_matrix = sparse(combos(:, 1), combos(:, 2), cost_list,...
-                                     obj.num_motors, obj.num_gearboxes); 
-        obj.ranking_matrix = ranking_matrix; 
-    end 
-    %} 
