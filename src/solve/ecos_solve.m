@@ -1,4 +1,5 @@
-function [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, varargin)
+function [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp,...
+                                G_soc, h_soc, G_rsoc, h_rsoc, varargin)
 %*******************************************************************************
 %   Function:
 %        
@@ -18,8 +19,13 @@ function [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, va
 %       Stanford University, Biomechatronic Lab 
 %*******************************************************************************
 
-%TODO -- settings
-%constrinats 
+% ecos doenst require to distinquish between rotated and standard SOCs so 
+% we can combine the, 
+
+% TODO -- sparsify for speed 
+
+G_soc = [G_soc, G_rsoc];  % combine the cells 
+h_soc = [h_soc, h_rsoc];  % combine the cells 
 
 dims.l = size(A_lp, 1); 
 dims.q = zeros(numel(G_soc), 1);
@@ -37,14 +43,15 @@ h = [b_lp; cat(1, h_soc{:})];
 
 if ~isempty(varargin{:})
     settings = varargin{1};
-    %opts  = ecosoptimset('verbose', 1, 'feastol', 1e-7, 'reltol', 1e-3);
+    opts  = ecosoptimset('verbose', 0, 'feastol', 1e-5, 'abstol', 1e-2, 'relto', 1e-3);
     
+    %{
     opts = ecosoptimset('verbose', 0,...
                         'maxit', 100,...
                         'feastol', settings.feastol,...
                         'abstol', settings.abstol,...
                         'reltol', settings.reltol); %,...
-     
+     %}
 else % default settings 
     opts =  ecosoptimset('verbose', 0,...
                       'maxit', 100,... % default 50 
@@ -81,14 +88,13 @@ if (data.exitflag == 0)
     result.objval = data.pcost; 
 elseif (data.exitflag == 10) 
     result.objval = data.pcost; 
-    display(data)
-elseif (data.exitflag == 1) 
-    %  % infeasibility proven 
+elseif (data.exitflag == 1) %  % infeasibility proven 
 elseif data.exitflag == -2 
-    display(data)
-    warning(['ecos_solve:Numerical issues may have been encountered. ',...
-                                     'Consider loosening ABSTOL']);
-    keyboard
+    result.objval = data.pcost; 
+
+    %warning(['ecos_solve:Numerical issues may have been encountered. ',...
+    %                                 'Consider loosening ABSTOL']);
+    %keyboard
 else
     display(data)
 end 
