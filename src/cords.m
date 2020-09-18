@@ -10,7 +10,9 @@ classdef cords < handle
 %
 % CORDS Properties:
 %     settings       - struct, controls which solver, print outs, etc     
-%     solve_settings - struct, controls numerical tolerances and thresholds for solving
+%     tolerances - struct, controls numerical tolerances and thresholds for solving
+%     physics - write me 
+%     filters - write me 
 %     problem_data   - struct, the data for the problem we are solving 
 %     problem_type   - 'standard' (convex), or 'fractional' (quasi-convex)
 %     mg_database    - mgdb (Motor Gearbox DataBase) object with motor/gearbox data
@@ -19,8 +21,9 @@ classdef cords < handle
 %       update_problem  - updates the data for the problem 
 %       optimize        - runs the optimization procedure using the loaded data 
 %       update_settings - 
-%       update_solve_settings -
-%       update_selection_filters - 
+%       update_tolerances -
+%       update_physics -
+%       update_filters - 
 %
 %   Straight up an actual explanation of some of the math and an instruction to 
 %   look at the help for the methods 
@@ -45,8 +48,10 @@ classdef cords < handle
 %   See also MGDB
 properties (GetAccess = public, SetAccess = private)
     settings        %  for solver, verbose, print frequency
-    solve_settings  % numerical tolerances and the like  
-    problem_data    % data for the problem we want to solve 
+    tolerances  % numerical tolerances and the like  
+    physics     % physics settings 
+    filters         % struct of selection criteria 
+    problem_data    % data for the problem we want to solve - NOTE maybe provate 
     problem_type    % char array, 'standard' (SOCP) or 'fractional'
     mg_database     % motor gearbox database object 
     % could add update_settings or similar -- could make it easier for people to debug issues 
@@ -56,26 +61,33 @@ end
 methods (Access = public)
 
     function obj = cords(varargin) % we will parse the inputs directly 
-    % Constructor for the class. 
+    % Constructor for the CORDS class. 
     %
- 	% 	Optional Inputs (in order)
+ 	% 	Optional Inputs (string/value pairs)
     %  
     %
     % 
     %
     %
-    % Returns:
-    %    MotorSelection object
+        validate_dependencies();  % make sure everything is installed 
+
         ip = inputParser; 
         addParameter(ip, 'settings', []);
-        addParameter(ip, 'solve_settings', []);
+        addParameter(ip, 'tolerances', []);
+        addParameter(ip, 'physics', []);
         addParameter(ip, 'reuse_db', true, @(x)islogical(x));
         parse(ip, varargin{:}); 
 
         reuse_db = ip.Results.reuse_db; 
-        obj.settings = validate_settings(ip.Results.settings); 
-        obj.solve_settings = validate_solve_settings(ip.Results.solve_settings); 
+        obj.settings = default_settings();
+        obj.tolerances = default_tolerances();
+        obj.physics = default_phyics(); 
 
+        obj.update_settings(ip.Results.settings);
+        obj.update_tolerances(ip.Results.tolerances);
+        obj.update_physics(ip.Results.physics);
+
+      
         % Look for a saved file called motor_database.mat (start looking in pwd?)
         % If cannot find a file create one and then save it
         % Database file will get overwritten after finishing optimizatino to 
@@ -110,7 +122,9 @@ methods (Access = public)
         end 
         
         obj.mg_database = mg_database; 
-
+        mg_settings.verbose = obj.settings.verbose; % link verbosity
+        obj.mg_database.update_settings(mg_settings); 
+        obj.filters = obj.mg_database.get_filters(); % start with the defaults 
         % NOTE: might want to look for saved file that has a database object 
         % stored away and ONLY if we cant find one, instantiate a new one
         % the reason to do this is that reading in all the csvs can be slow 
@@ -119,11 +133,18 @@ methods (Access = public)
     
 
     function update_problem(obj, problem_data)
-    % update_problem
+    % update_problem does this and that 
     %   
+    %  Inputs:
+    %      problem_data 
     %
+    %       there are a lot of possible ways 
     %
+    %   prob.update_problem(problem_data)  
     %
+    %doew dfgdf g
+    %sdf dsdfsd 
+    %   sdfsdfsdfs sd fsdf sdf sdf s 
     %
     %
         [problem_data, problem_type] = obj.validate_problem_data(problem_data);
@@ -154,16 +175,13 @@ methods (Access = public)
         end 
 
         %
-        %       Get Valud Motor/Gearbox Combinations 
-        %
-        %
-        %   TODO filter me 
-        %   TODO filter me 
-        %   TODO filter me 
-        %
-
-
-        obj.mg_database.update_filter('omega_max', max(abs(obj.problem_data.omega))); 
+        %       Get Valod Motor/Gearbox Combinations 
+        % Filtering out some options by max velocity  
+        % If our specific filters are tighter than the others, use those 
+        % TODO -- update torque filters in the LP presolve
+        obj.filters.omega_max = max(obj.filters.omega_max,...
+                                              max(abs(obj.problem_data.omega)));
+        obj.mg_database.update_filters(obj.filters);
 
         [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
         % Convert from database map keys to structs 
@@ -172,10 +190,8 @@ methods (Access = public)
             gearboxes(i) = obj.mg_database.gearboxes(gearbox_keys{i});
         end 
     
-        %
         %       
         %          Call the Optimizer for the Given Problem Type  
-        %
         %
         if strcmp(obj.problem_type, 'standard')  
             [sol_structs, cost_list, mincost, exitflag] = ...
@@ -208,22 +224,90 @@ methods (Access = public)
     %
     %
     %
+        settings = obj.settings; % the current settings 
+        % Loop through the fields
+        fn = fieldnames(new_settings);
+        for ii = 1:length(fn)
+            field = fn{ii};
+            if ~isfield(settings, field)
+                error('update_settings: invalid field %s', field);
+            end 
+        end 
+        if isfield(new_settings, 'verbose')
+            settings.verbose = new_settings.verbose;         
+        end
+        if isfield(new_settings, 'print_freq')
+            settings.print_freq = new_settings.print_freq; 
+        end
+        if isfield(new_settings, 'line_freq')
+            settings.line_freq = new_settings.line_freq; 
+        end
+        valid_solvers = {'gurobi', 'ecos'};
+        has_gurobi = ~isempty(which('gurobi.m'));
+        has_ecos = ~isempty(which('ecos.m'));
+        if ~any([has_gurobi, has_ecos])
+            error('validate_settings: no valid solvers found in path');
+        end 
+        if isfield(new_settings, 'solver')
+            settings.solver = new_settings.solver; 
+        end
+        if strcmp(settings.solver, 'gurobi')
+            if ~has_gurobi
+                if has_ecos
+                    has_ecos; settings.solver = 'ecos'; 
+                end 
+                warning('Gurobi solver not found, using %s', settings.solver);                
+            end 
+        end 
+        if strcmp(settings.solver, 'ecos')
+            if ~has_ecos
+                if has_gurobi
+                    settings.solver = 'gurobi'; 
+                end 
+                warning('ECOS solver not found, using %s', settings.solver);
+            end 
+        end 
     end 
 
-    function update_solve_settings(obj, new_solve_settings)
-    %
-    %
-    %
-    %
-    %
+
+    function update_tolerances(obj, new_solve_settings)
+
+        nss = new_solve_settings; % just a shorter name  
+        iss = obj.tolerances;  % initial  
+        % TODO -- add validation on ranges 
+        if isfield(nss, 'rho'); iss.rho = nss.rho; end 
+        if isfield(nss, 'gmmu_tol'); iss.gmmu_tol = nss.gmmu_tol; end 
+        if isfield(nss, 'feastol'); iss.feastol = nss.feastol; end 
+        if isfield(nss, 'reltol'); iss.reltol = nss.reltol; end 
+        if isfield(nss, 'abstol'); iss.abstol = nss.abstol; end 
+        if isfield(nss, 'qcvx_reltol'); iss.qcvx_reltol = nss.qcvx_reltol; end 
+        if isfield(nss, 'qcvx_abstol'); iss.qcvx_abstol = nss.qcvx_abstol; end
+        obj.tolerances = iss; 
     end 
 
 
-    function update_selection_filters(obj, new_selection_filters)
+    function update_physics(obj, new_physics)
+    %
+    %
+    %
+    %
+        np = new_physics;
+        ip = obj.physics; % initial physics 
+        if isfield(np, 'inertia'); ip.inertia = np.inertia; end
+        if isfield(np, 'f_damping'); ip.f_damping = np.f_damping; end 
+        if isfield(np, 'f_coulomb'); ip.f_coulomb = np.f_coulomb; end 
+        if isfield(np, 'f_static'); ip.f_static = np.f_static; end 
+        obj.physics = ip; 
+    end 
+
+    function update_filters(obj, new_filters)
     %
     %
     %   Pass this straight to mgdb 
     %
+    %   struct -- 
+    %
+        obj.mg_database.update_filters(new_filters); % hashtag YES filter
     end 
 
 
@@ -244,7 +328,8 @@ end % end public methods
 
 methods (Access = private)
 
-    function [problem_data, problem_type] = validate_problem_data(obj, problem_data)
+    function [problem_data, problem_type] = ...
+                                        validate_problem_data(obj, problem_data)
     %
     %
     %
@@ -561,7 +646,7 @@ methods (Access = private)
 
         %
         %
-        % Once all validated 
+        %    Now all inputs validated  :) 
         %
         %
         problem_data.Q = Q;   % etc 
@@ -616,7 +701,6 @@ methods (Access = private)
 
         table_line = [repmat('-', 1, 80), '\n']; 
         obj.vprintf(1, table_line);
-
 
         header_r1 = [" Combo x  |",  " Repeated |", " Mixed Int |",...
                           "     |",  "   |", "     "];
@@ -774,8 +858,8 @@ methods (Access = private)
         bad_upper_bound_flag = false;   % flag for initial upper bounds too low 
 
         % Totsl convrthence criteria 
-        while (max_abs_bnd_diff > obj.settings.qcvx_abstol) && ...
-              (max_rel_bnd_diff > obj.settings.qcvx_reltol) && ...
+        while (max_abs_bnd_diff > obj.tolerances.qcvx_abstol) && ...
+              (max_rel_bnd_diff > obj.tolerances.qcvx_reltol) && ...
                ~bad_lower_bound_flag && ~bad_upper_bound_flag
 
             pq = PQ(true); % max priority queue -- new every loop 
@@ -798,8 +882,8 @@ methods (Access = private)
 
            
                 while (lb_list(j) <= global_ub)  && ~infeas_lb_flag ...
-                      &&  (rel_diff_j > obj.settings.qcvx_reltol)  && ...        
-                          (abs_diff_j > obj.settings.qcvx_abstol) || init_flag 
+                      &&  (rel_diff_j > obj.tolerances.qcvx_reltol)  && ...        
+                          (abs_diff_j > obj.tolerances.qcvx_abstol) || init_flag 
 
                    
                     if init_flag 
@@ -816,11 +900,12 @@ methods (Access = private)
                         bound = min((lb_list(j) + ub_list(j))/2, global_ub); 
                     end 
 
-                    % Solve 
+                    %
+                    %        Solve 
                     %
                     
                     [combo_cost, tmp_sol, comp_time] = obj.combo_solve(motor,...
-                                                 gearbox, bound); 
+                                                        gearbox, bound); 
              
 
                     % bound update 
@@ -834,7 +919,6 @@ methods (Access = private)
                         ub_list(j) = bound; 
                     end 
                 
-                %      ((ub_list(j) - lb_list(j)) > obj.settings.qcvx_reltol*max(min(ub_list(j), global_ub), abs(lb_list(j)))) &&...
                     abs_diff_j = ub_list(j) - lb_list(j); 
                     rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
                 end  % end while update bounds for combo j 
@@ -884,9 +968,9 @@ methods (Access = private)
 
                             cost_diff = mincost - obj.problem_data.cost_lb;  
 
-                            if (cost_diff < obj.settings.qcvx_abstol) || ...
-                                    (cost_diff < obj.settings.qcvx_reltol*...
-                                        max(abs([mincost, obj.problem_data.cost_lb])));
+                            if (cost_diff < obj.tolerances.qcvx_abstol) || ...
+                                    (cost_diff < obj.tolerances.qcvx_reltol*...
+                                max(abs([mincost, obj.problem_data.cost_lb])));
                                 obj.vprintf(1, ['\nLower bound (lb) is feasible. ',...
                                             'Reduce lower bound and reoptimize']);
                                 bad_lower_bound_flag = true; 
@@ -898,14 +982,10 @@ methods (Access = private)
                 end 
 
 
-                % Prints 
-        %header_txt = sprintf('%+7s%+9s%+13s%+13s%+13s%+10s%+10s%+9s\n', headers);
-
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-                disp_txt = sprintf('%6d%12d%s%s%s%8.4f%7.1f',...
-                        outer_loop_iter, j, sciprint(global_lb, '13.3'),...
-                        sciprint(global_ub,'13.3'), sciprint(mincost, '13.3'),...
-                         max_rel_bnd_diff,  toc(start_tic));                
+                disp_txt = sprintf('%6d%12d%13.3e%13.3e%13.3e%8.4f%7.1f',...
+                        outer_loop_iter, j, global_lb, global_ub, mincost,... 
+                                            max_rel_bnd_diff,  toc(start_tic));                
                 obj.vprintf(1, disp_txt);
             end    % finish loop through combos 
 
@@ -918,15 +998,15 @@ methods (Access = private)
 
             % update the print 
             obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
-            disp_txt = sprintf('%6d%12d%s%s%s%8.4f%7.1f',...
-                        outer_loop_iter, j, sciprint(global_lb, '13.3'),...
-                        sciprint(global_ub,'13.3'), sciprint(mincost, '13.3'),...
-                                max_rel_bnd_diff, toc(start_tic));                
+            disp_txt = sprintf('%6d%12d%13.3e%13.3e%13.3e%8.4f%7.1f',...
+                        outer_loop_iter, j, global_lb, global_ub, mincost,...
+                                            max_rel_bnd_diff, toc(start_tic));                
             obj.vprintf(1, disp_txt);
 
             % If no solution found at end of first outer loop, break 
             if (outer_loop_iter == 1) && isinf(mincost)
-                obj.vprintf(1, '\nNo solutions found. Try increasing the upper bound');
+                obj.vprintf(1, ['\nNo solutions found.',...
+                                            ' Try increasing the upper bound']);
                 bad_upper_bound_flag = true; 
             end 
 
@@ -935,11 +1015,8 @@ methods (Access = private)
             obj.vprintf(1, '\n');   % print new line            
         end 
 
-
-        % TODO -- add a final print here 
-        
+        % TODO -- add a final print here         
         num_sols = pq.size(); % may not have found num_return feas sols 
-
         if num_sols == 0
             sol_structs = struct(); % empty struct; 
         elseif num_sols < num_return
@@ -952,11 +1029,9 @@ methods (Access = private)
         end 
         cost_list = ub_list; % NOTE: no pseudocost incorporated here 
         
-
-
-        if (max_abs_bnd_diff < obj.settings.qcvx_abstol) 
+        if (max_abs_bnd_diff < obj.tolerances.qcvx_abstol) 
             exitflag = 1; 
-        elseif (max_rel_bnd_diff < obj.settings.qcvx_reltol) 
+        elseif (max_rel_bnd_diff < obj.tolerances.qcvx_reltol) 
             exitflag = 2; 
         elseif bad_lower_bound_flag
             exitflag = 3;
@@ -969,8 +1044,7 @@ methods (Access = private)
    
 
     function [combo_cost, sol, solve_time, exitflag] = combo_solve(obj,...
-                                                        motor, gearbox,...
-                                                                bound)
+                                                        motor, gearbox, bound)
     %
     %
     %
@@ -1006,11 +1080,8 @@ methods (Access = private)
                                      index_map, comp_torques,  motor, gearbox); 
             exitflag = 1; 
             
-            if ~isempty(bad_idxs_clean)
-                disp('cleaning has failed you -- trying fix gm mu')
-                [sol, combo_cost, exitflag] = obj.fix_gm_mu_errors(init_cost,...
-                                    cutoff, bad_idxs, directions, index_map,...
-                                        matrices, comp_torques, motor, gearbox);
+            if ~isempty(bad_idxs_clean) || isnan(y_sol(1))
+                error('need to add mixed integer backup')
             end
 
         end 
@@ -1033,7 +1104,7 @@ methods (Access = private)
             cutoff = bound; 
         elseif strcmp(obj.problem_type, 'fractional')
             cutoff = inf; 
-            assert(~isinf(bound), 'Bound must be finite for fractional problems');
+            assert(~isinf(bound),'Bound must be finite for fractional problems');
         else 
             error('Invalid problem type');
         end 
@@ -1100,9 +1171,7 @@ methods (Access = private)
         % 		Friction/Drag and Inertia Compensation
         %
         % tau_motor_friction is JUST kinetic 
-        % TODO -- static friction business 
         [tau_motor_friction, tau_static_friction] = obj.friction_model(motor, gearbox); 
-
         % Since BEFORE gearbox only multiplied by ratio NOT ratio^2 
         % will effectively get multiplied by ratio again through gearbox
         tau_motor_inertia = motor.inertia * ratio * omega_dot; 
@@ -1117,13 +1186,12 @@ methods (Access = private)
         tau_mfj = tau_motor_friction + tau_motor_inertia; 
         I_comp = tau_mfj/k_t; % corresponding current 
 
-        % FOR SOME DEBUG 
-
         % Index Map for Optimization 
         I_idxs = 1:n;
         Isq_idxs = I_idxs(end) + (1:n);	 % equivalent to I squared 
         tau_idxs = Isq_idxs(end) + (1:n); 
 
+        % potenial condition this on the physics too 
         if nzvi > 0 
             sf_idxs = tau_idxs(end) + (1:nzvi);      % for static friction (sf)
             x_idxs = sf_idxs(end) + (1:w); 
@@ -1394,10 +1462,8 @@ methods (Access = private)
         %
         %		Adjust A_eq_tau_x and b_eq_tau_x accordingly
         %
-        if nzvi > 0 
-        	% TODO -- probably consider gb fully efficient at zero vel?
+        if (nzvi > 0) && (tau_static_friction > 0)
         	% think through a little more (but then just ratio on next line)
-
             % add the static frinction value (to be computed) into the torque equlity 
             % for the motor itslef
             A_eq_tau_x(n + zero_vel_idxs, sf_idxs) = ratio*eye(nzvi); 
@@ -1405,7 +1471,8 @@ methods (Access = private)
             % Overwrite the other zero vel points, treat gb as fully eff 
             if eta < 1
             	% Replace ratio*kt*eta with ratio*kt on those rows 
-            	A_eq_tau_x(n + zero_vel_idxs, gm_idxs(1) + zero_vel_idxs - 1) = ratio*k_t*eye(nzvi);
+            	A_eq_tau_x(n + zero_vel_idxs, gm_idxs(1) + zero_vel_idxs - 1)...
+                                                         = ratio*k_t*eye(nzvi);
             	A_eq_tau_x(n + zero_vel_idxs, mu_idxs) = 0;  % dont consider it driven at this step
             end 
 
@@ -1667,8 +1734,8 @@ methods (Access = private)
         c_rho_aug = zeros(dim_y, 1); 
 
         if eta < 1  % TODO -- group with other things 
-        	c_rho_aug(gm_idxs) = so.* obj.solve_settings.rho; 
-        	c_rho_aug(mu_idxs) = -so .* obj.solve_settings.rho; 
+        	c_rho_aug(gm_idxs) = so.* obj.tolerances.rho; 
+        	c_rho_aug(mu_idxs) = -so .* obj.tolerances.rho; 
         end 
 
         c_cost = c_cost_init + c_rho_aug;
@@ -1803,7 +1870,7 @@ methods (Access = private)
 
 
             % Only really concerned with where decomp may be bad (aug_idxs)            
-            gmmu_bad_idxs = find(min_gmmu > obj.solve_settings.gmmu_tol); 
+            gmmu_bad_idxs = find(min_gmmu > obj.tolerances.gmmu_tol); 
             bad_vals = min_gmmu(gmmu_bad_idxs);
             bad_bin_idxs = gmmu_bad_idxs; 
             
@@ -1844,7 +1911,7 @@ methods (Access = private)
         gm_init = y_sol(index_map.gm);
         mu_init = y_sol(index_map.mu); 
         min_gmmu = min(abs(gm_init), abs(mu_init));
-        bad_idxs = find(min_gmmu > obj.solve_settings.gmmu_tol);        % absolute indexing 
+        bad_idxs = find(min_gmmu > obj.tolerances.gmmu_tol);        % absolute indexing 
 
 
         % and maybe dont alter others that are already close 
@@ -1867,7 +1934,7 @@ methods (Access = private)
         mu = (tau_comp .* driven * eta)/(ratio*k_t);
         I = gm + mu + comp_torques.I_comp; 
         s = (gm - mu).^2; 
-        gmsq = gm(index_map.binary).^2;
+        %gmsq = gm(index_map.binary).^2;
         del = driving(index_map.binary); 
 
 
@@ -1881,10 +1948,10 @@ methods (Access = private)
 
         fix_idxs = moving; 
 
-        I_ub_bad = [I > matrices.ub(index_map.I) + obj.solve_settings.feastol];  
-        I_lb_bad = [I < matrices.lb(index_map.I) - obj.solve_settings.feastol]; 
+        I_ub_bad = [I > matrices.ub(index_map.I) + obj.tolerances.feastol];  
+        I_lb_bad = [I < matrices.lb(index_map.I) - obj.tolerances.feastol]; 
         I_bad = or(I_ub_bad, I_lb_bad);
-        gmmu_good = [min_gmmu < obj.solve_settings.gmmu_tol]; 
+        gmmu_good = [min_gmmu < obj.tolerances.gmmu_tol]; 
         ignore = and(I_bad, gmmu_good); 
         fix_idxs = and(moving, not(ignore));
 
@@ -1905,6 +1972,7 @@ methods (Access = private)
         %tmp_sol(index_map.gmsq(fix_idxs_shift)) = gmsq(fix_idxs_shift);     % shifted
 
         not_nan_idxs = find(~isnan(tmp_sol)); 
+        clean_matrices = matrices; 
 
         % This feasTol fudge factor is because otherwise we have redundant 
         % contraints which in a perfect world would be deteced but it
@@ -1923,14 +1991,19 @@ methods (Access = private)
 
         % Check for direct upper bound issues 
 
-        % Need a feas tol here because solvers will sometimes slightly violate
-        % the constraints 
-        %feasTol = 1e-5;   % TODO -- link up with solver settings 1e-6 works without static friction
 
-        ub_bad_idxs = find(tmp_sol > matrices.ub + obj.solve_settings.feastol);  
-        lb_bad_idxs = find(tmp_sol < matrices.lb - obj.solve_settings.feastol); 
+        % TODO Something to consider is if x-vals are up against bounds....
+        % work through this and maybe try to construct an example where we run into this
+        % 
+        % by keeping torque the same dont need to worry about x vars that are 
+        % only coupled into torque 
 
-        clean_matrices = matrices; 
+        %{
+
+        ub_bad_idxs = find(tmp_sol > matrices.ub + obj.tolerances.feastol);  
+        lb_bad_idxs = find(tmp_sol < matrices.lb - obj.tolerances.feastol); 
+
+        
         if any(ub_bad_idxs) || any(lb_bad_idxs)
  
   
@@ -1990,40 +2063,34 @@ methods (Access = private)
                 new_cost =  init_cost;
             end 
         else 
-            ff = 1e-3; % fudge factor on specified bounds to help with numerics
-            % Anything that was fixed to zero we want to keep numerically zero
-            % for the rest we will loosen the bounds a little bit to help with numerical issues
-            tmp_lb = max(matrices.lb, tmp_sol - [tmp_sol ~= 0]*ff);
-            tmp_ub = min(matrices.ub, tmp_sol + [tmp_sol ~= 0]*ff);
+        %} 
+        ff = 1e-3; % fudge factor on specified bounds to help with numerics
+        % Anything that was fixed to zero we want to keep numerically zero
+        % for the rest we will loosen the bounds a little bit to help with numerical issues
+        tmp_lb = max(matrices.lb, tmp_sol - [tmp_sol ~= 0]*ff);
+        tmp_ub = min(matrices.ub, tmp_sol + [tmp_sol ~= 0]*ff);
 
 
-            clean_matrices.lb(not_nan_idxs) = tmp_lb(not_nan_idxs);
-            clean_matrices.ub(not_nan_idxs) = tmp_ub(not_nan_idxs);
+        clean_matrices.lb(not_nan_idxs) = tmp_lb(not_nan_idxs);
+        clean_matrices.ub(not_nan_idxs) = tmp_ub(not_nan_idxs);
 
 
-            [new_sol, new_cost, result, model] = obj.socp_solve(clean_matrices, inf);
+        [new_sol, new_cost, result] = obj.socp_solve(clean_matrices, inf);
 
-            % TODO consider parsing here
-            if isnan(new_sol(1))
-                disp('ok so this fauled ')
-                keyboard
-                iis = gurobi_iis(model)
-                keyboard 
-            end 
+        cost_diff = new_cost - init_cost;
+        cost_diff_rel = cost_diff/min(abs([new_cost, init_cost]));
 
-            cost_diff = new_cost - init_cost;
-            cost_diff_rel = cost_diff/min(abs([new_cost, init_cost]));
-
-            % TODO using 0.01 here calling this parameter a reltol might not 
-            % be the most accurate -- should still be setable and 1% is fine 
-            % may just need to add another parameter entirely
-            if (cost_diff > obj.solve_settings.abstol) && ...
-                                    (cost_diff_rel > 0.01)
-                disp('toooooooooooo diff')
-                keyboard
-            end
-        end  
+        % TODO using 0.01 here calling this parameter a reltol might not 
+        % be the most accurate -- should still be setable and 1% is fine 
+        % may just need to add another parameter entirely
+        if (cost_diff > obj.tolerances.abstol) && ...
+                                (cost_diff_rel > obj.tolerances.reltol)
+            new_sol = nan;
+            new_cost = inf; 
+        end
+         
     end 
+    
 
     function [tau_motor_friction, tau_static_friction] = ...
                                             friction_model(obj, motor, gearbox)
@@ -2033,12 +2100,6 @@ methods (Access = private)
     %
     %
     %
-        % TODO -- incorporate 'settings' or whatever
-        
-        % TODO
-        % TODO      How do we handle missing inputs?????????
-        % TODO
-        % TODO 
         omega = obj.problem_data.omega;
         sign_omega = sign(omega); 
 
@@ -2086,12 +2147,25 @@ methods (Access = private)
             error('friction_model: Invalid motor type');
         end 
             
-        % combine coulomb and viscous 
+        % Use Settings  
+        if ~obj.physics.f_damping
+            viscous_friction = 0*viscous_friction;
+        end 
+
+        if ~obj.physics.f_coulomb
+            coulomb_friction = 0*coulomb_friction;
+        end 
+
+        if ~obj.physics.f_static
+            tau_static_friction = 0; 
+        end 
+
         tau_motor_friction = coulomb_friction + viscous_friction; 
     end 
 
 
-    function [y_sol, combo_cost, result, model] = socp_solve(obj, matrices, cutoff)
+    function [y_sol, combo_cost, result, model] = ...
+                                              socp_solve(obj, matrices, cutoff)
     %
     %
     %   TODO -- this all needs cleaning -- might want to add a seperate 
@@ -2114,22 +2188,15 @@ methods (Access = private)
         if strcmpi(obj.settings.solver, 'gurobi') 
             [result, model] = gurobi_solve(Q_cost, c_cost, beta0, A_eq, b_eq,...
                                              A_ineq, b_ineq, quadcon, lb, ub,...
-                                                    cutoff, obj.solve_settings);
-        elseif strcmpi(obj.settings.solver, 'ecos') || ...
-                            strcmpi(obj.settings.solver, 'sedumi')
+                                                    cutoff, obj.tolerances);
+        elseif strcmpi(obj.settings.solver, 'ecos') 
             if strcmpi(obj.settings.solver, 'ecos')
                 [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
                              prep_socp(Q_cost, c_cost, beta0, A_eq, b_eq,...
                         A_ineq, b_ineq, quadcon, lb, ub,  cutoff, 'ecos');
                 [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp,...
-                            G_soc, h_soc, G_rsoc, h_rsoc, obj.solve_settings);
-            else
-                [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
-                             prep_socp(Q_cost, c_cost, beta0, A_eq, b_eq,...
-                        A_ineq, b_ineq, quadcon, lb, ub,  cutoff, 'sedumi');
-                [result, data] = sedumi_solve(c, A_eq, b_eq, A_lp, b_lp,...
-                            G_soc, h_soc, G_rsoc, h_rsoc, obj.solve_settings); 
-            end 
+                            G_soc, h_soc, G_rsoc, h_rsoc, obj.tolerances);
+            end
         else
             error('invalid solver'); % shouldnt be possible 
         end 
@@ -2159,6 +2226,7 @@ methods (Access = private)
 
 
 
+
 end % end private methods 
 
 %==============================================================================
@@ -2166,84 +2234,18 @@ end % end CLASSDEF
 
 
 %%%% Non Class Methods 
-
-
-function settings = validate_settings(init_settings)
-    %
-    %   Takes in settings which may be missing fields and returns 
-    %   valid settings or errors out if settings were bad 
-    %
-    settings = default_settings(); 
-
-    % Loop through the fields
-    fn = fieldnames(init_settings);
-
-    for ii = 1:length(fn)
-        field = fn{ii};
-        if ~isfield(settings, field)
-            error('validate_settings: invalid field %s', field);
-        end 
+function validate_dependencies()
+% Make sure we have everything we need installed 
+    if isempty(which('mgdb.m'))
+        error('mdbm.m (Motor-Gearbox DataBase) not found');
     end 
-
-    if isfield(init_settings, 'verbose')
-        settings.verbose = init_settings.verbose;         
-    end
-
-    if isfield(init_settings, 'print_freq')
-        settings.print_freq = init_settings.print_freq; 
-    end
-
-    if isfield(init_settings, 'line_freq')
-        settings.line_freq = init_settings.line_freq; 
-    end
-
-    valid_solvers = {'gurobi', 'ecos', 'sedumi'};
-    has_gurobi = ~isempty(which('gurobi.m'));
-    has_ecos = ~isempty(which('ecos.m'));
-    has_sedumi = ~isempty(which('sedumi.m'));
-
-    if ~any([has_gurobi, has_ecos, has_sedumi])
-        error('validate_settings: no valid solvers found in path');
-    end 
-
-    if isfield(init_settings, 'solver')
-        settings.solver = init_settings.solver; 
-    end
-
-    if strcmp(settings.solver, 'gurobi')
-        if ~has_gurobi
-            if has_ecos; settings.solver = 'ecos'; else settings.solver = 'sedumi'; end 
-            warning('Gurobi solver not found, using %s', settings.solver);                
-        end 
-    end 
-    if strcmp(settings.solver, 'ecos')
-        if ~has_ecos
-            if has_gurobi; settings.solver = 'gurobi'; else settings.solver = 'sedumi'; end 
-            warning('ECOS solver not found, using %s', settings.solver);
-        end 
-    end 
-    if strcmp(settings.solver, 'sedumi')
-        if ~has_sedumi
-            if has_gurobi; settings.solver = 'gurobi'; else settings.solver = 'ecos'; end 
-            warning('Sedumi solver not found using: %s', settings.solver);
-        end 
+    if isempty(which('gurobi.m')) && isempty(which('ecos.m'))
+        error('no valid solvers installed (Gurobi or ECOS)');
     end 
 end 
 
-function solve_settings = validate_solve_settings(init_solve_settings)
 
-    iss = init_solve_settings; % just a shorter name 
-    nss = default_solve_settings(); % new solve settings 
-    % TODO -- add validation on ranges 
-    if isfield(iss, 'rho'); nss.rho = iss.rho; end 
-    if isfield(iss, 'gmmu_tol'); nss.gmmu_tol = iss.gmmu_tol; end 
-    if isfield(iss, 'feastol'); nss.feastol = iss.feastol; end 
-    if isfield(iss, 'reltol'); nss.reltol = iss.reltol; end 
-    if isfield(iss, 'abstol'); nss.abstol = iss.abstol; end 
-    if isfield(iss, 'qcvx_reltol'); nss.qcvx_reltol = iss.qcvx_reltol; end 
-    if isfield(iss, 'qcvx_abstol'); nss.qcvx_abstol = iss.qcvx_abstol; end
-    solve_settings = nss; % new solve settings 
-end 
+
 
 function def_settings = default_settings()
     def_settings = struct('solver', 'gurobi',...
@@ -2252,17 +2254,22 @@ function def_settings = default_settings()
                            'print_freq', 1);  % how often to update line 
 end 
 
-function def_solve_settings = default_solve_settings()
-    def_solve_settings = struct('rho', 1e-4,...
-                                'gmmu_tol', 1e-3, ... % 1 ma 
-                                'feastol', 1e-5,...    % 1e-5
-                                'reltol', 1e-3,... % 0.1 percent optimality
-                                'abstol', 1e-3,...  % if tighter, sometimes issues
-                                'qcvx_reltol', 1e-3,...
-                                'qcvx_abstol', 1e-7);
-
+function def_tolerances = default_tolerances()
+    def_tolerances = struct('rho', 1e-4,...
+                            'gmmu_tol', 1e-3, ... % 1 ma 
+                            'feastol', 1e-5,...    % 1e-5
+                            'reltol', 1e-2,... % 1 percent optimality
+                            'abstol', 1e-3,...  % if tighter, sometimes issues
+                            'qcvx_reltol', 1e-3,...
+                            'qcvx_abstol', 1e-7);
 end 
 
+function def_physics = default_phyics()
+    def_physics = struct('inertia', true,...
+                            'f_damping', true,...
+                            'f_coulomb', true,...
+                            'f_static', false);
+end 
 
 function [test_motor, test_gearbox] = test_motor_gearbox()
 
