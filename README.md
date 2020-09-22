@@ -19,11 +19,11 @@ CORDS can solve any motor/gearbox selection that can be cast as the problem type
  * [optimizing exoskeleton design parameters]
 
 Specifically CORDS solves 
-<p align="center"><img src="/tex/7665dadf4e306fda04f5cdc79623abd2.svg?invert_in_darkmode&sanitize=true" align=middle width=336.2595522pt height=68.07495089999999pt/></p> 
+<p align="center"><img src="/tex/8e524d848db90a42ba21abfbb9832cfe.svg?invert_in_darkmode&sanitize=true" align=middle width=336.2595522pt height=78.28491164999998pt/></p> 
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
 
-with <img src="/tex/bee26f84df30aa6135fde80374347be3.svg?invert_in_darkmode&sanitize=true" align=middle width=69.03892379999998pt height=22.55708729999998pt/> and <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the inputs satsify: 
+with motor currents <img src="/tex/cd427d5ecb99fcabde5a7fffa6103a1f.svg?invert_in_darkmode&sanitize=true" align=middle width=50.911134449999984pt height=22.55708729999998pt/> and auxiliary varaibles <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the inputs satsify: 
 * <img src="/tex/bad8cbb55822df2eb7bbf59df6190e30.svg?invert_in_darkmode&sanitize=true" align=middle width=80.71703969999999pt height=26.17730939999998pt/>, diagonal PSD matrix for <img src="/tex/52c03ebb6ac0c8e7f1261d96409b7cbc.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/>
 * <img src="/tex/1e47cf05617b340cea169d5c16925949.svg?invert_in_darkmode&sanitize=true" align=middle width=87.50376194999998pt height=26.17730939999998pt/>, symmetric PSD
 * <img src="/tex/6f41c62b5c2794bfa9a2bef8f734c971.svg?invert_in_darkmode&sanitize=true" align=middle width=87.05570445pt height=26.17730939999998pt/>, symmetric PSD or encodes SOC constraint (see cords.update_problem)
