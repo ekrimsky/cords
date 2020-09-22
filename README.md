@@ -17,7 +17,9 @@ a human explanation before math
 
 interface to second order cone pr
 split out optional constraints 
-<p align="center"><img src="/tex/ef10577ea74a5e83fb58bb65d56cb8a0.svg?invert_in_darkmode&sanitize=true" align=middle width=445.39951664999995pt height=169.57442534999998pt/></p>
+<p align="center"><img src="/tex/72128932f32cecf4ff94d0aa0deb66dc.svg?invert_in_darkmode&sanitize=true" align=middle width=324.90884415pt height=68.07495089999999pt/></p> 
+ with optional contraints 
+ <p align="center"><img src="/tex/aa4a797a4bf8aa49a938ae56eeda2eb4.svg?invert_in_darkmode&sanitize=true" align=middle width=365.50158809999994pt height=93.11585249999999pt/></p>
 
 where 
 
@@ -25,7 +27,7 @@ also linear fractional programs too where the minimization objective is replaced
 
 
 ## A simple example - minimizing joule heating 
-First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. 
+First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. Minimizing joule heating means minimizing <img src="/tex/7c727e6e17d47b11d7d6e1155ea7e099.svg?invert_in_darkmode&sanitize=true" align=middle width=88.14323099999999pt height=27.15900329999998pt/> where <img src="/tex/1e438235ef9ec72fc51ac5025516017c.svg?invert_in_darkmode&sanitize=true" align=middle width=12.60847334999999pt height=22.465723500000017pt/> is the motor resistance and <img src="/tex/8294c58cadf040e3716a7f6bc748cdde.svg?invert_in_darkmode&sanitize=true" align=middle width=13.16686469999999pt height=27.15900329999998pt/> is the current at timestep <img src="/tex/77a3b857d53fb44e33b53e4c8b68351a.svg?invert_in_darkmode&sanitize=true" align=middle width=5.663225699999989pt height=21.68300969999999pt/>. 
 ```
 >> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
 >> data.omega = omega;
@@ -34,8 +36,8 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.c0 = [];
 >> data.M0 = [];
 >> data.r0 = [];
->> data.tau_c = tau_des;
 >> data.T = [];      % simple case, no x variable 
+>> data.tau_c = tau_des;
 ```
 We now pass this data to the CORDS optimizer
 ```
@@ -43,17 +45,13 @@ We now pass this data to the CORDS optimizer
 >> prob.update_problem(data);    % attach the data to the problem
 >> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
 ```
-## A less simple example - minimizing joule heating with parallel elasticity
+## adding optimal parallel elasticity
+If we add a parallel elastic element with stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> our torque equality becomes
+<p align="center"><img src="/tex/9cd212a7e6bf780596bd55687c31999a.svg?invert_in_darkmode&sanitize=true" align=middle width=323.4032736pt height=17.031940199999998pt/></p>
+letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> 
 ```
->> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
->> data.omega = omega;
->> data.omega_dot = omega; 
->> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
->> data.c0 = [];
->> data.M0 = [];
->> data.r0 = [];
->> data.tau_c = tau_des;
->> data.T = [];      % simple case, no x variable 
+>> data.T = [-1];      % include coupling of torque  
+>> data.tau_c = tau_des; 
 ```
 
 
