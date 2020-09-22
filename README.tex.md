@@ -36,10 +36,10 @@ $$
 \end{align*}
 $$
 
-where the inputs constrinats satsify: 
-*  foo 
-*  bar $r + 5$ 
-*  baz 
+where the inputs satsify: 
+* foo 
+* bar $r + 5$ 
+* baz 
 
 CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(r_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(r_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
 
