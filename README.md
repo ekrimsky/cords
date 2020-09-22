@@ -38,6 +38,7 @@ We provide interfaces to simplify using CORDS for common optimization objectives
 * [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
 * [minimum peak torque](/src/interfaces/min_peak_torque.m)
 
+FASFFASFASFASFASFASFASF ASFASFA see ubg sdfsf sdfsdfsdfsdfsdfsdfsdsgsgeawefwf
 
 ## A simple example - minimizing joule heating 
 First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. Minimizing joule heating means minimizing <img src="/tex/7c727e6e17d47b11d7d6e1155ea7e099.svg?invert_in_darkmode&sanitize=true" align=middle width=88.14323099999999pt height=27.15900329999998pt/> where <img src="/tex/1e438235ef9ec72fc51ac5025516017c.svg?invert_in_darkmode&sanitize=true" align=middle width=12.60847334999999pt height=22.465723500000017pt/> is the motor resistance and <img src="/tex/8294c58cadf040e3716a7f6bc748cdde.svg?invert_in_darkmode&sanitize=true" align=middle width=13.16686469999999pt height=27.15900329999998pt/> is the current at timestep <img src="/tex/77a3b857d53fb44e33b53e4c8b68351a.svg?invert_in_darkmode&sanitize=true" align=middle width=5.663225699999989pt height=21.68300969999999pt/>. 
