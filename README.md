@@ -13,17 +13,23 @@ CORDS requires the user to specify a trajectory of robot joint velocities <img s
 
 ## What can CORDS solve?  
 
+CORDS 
 a human explanation before math 
 
-interface to second order cone pr
-split out optional constraints 
-<p align="center"><img src="/tex/72128932f32cecf4ff94d0aa0deb66dc.svg?invert_in_darkmode&sanitize=true" align=middle width=324.90884415pt height=68.07495089999999pt/></p> 
+Specifically CORDS solves 
+<p align="center"><img src="/tex/3d12c8bf484eeb4b4377e81b4eca745e.svg?invert_in_darkmode&sanitize=true" align=middle width=324.90884415pt height=68.07495089999999pt/></p> 
  with optional contraints 
- <p align="center"><img src="/tex/aa4a797a4bf8aa49a938ae56eeda2eb4.svg?invert_in_darkmode&sanitize=true" align=middle width=365.50158809999994pt height=93.11585249999999pt/></p>
+ <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
+where the inputs constrinats .. 
+CORDS can also solve linear fractional programs where the minimization objective is replaced with <img src="/tex/b923d55946fe7624d6802fc5c79a0dda.svg?invert_in_darkmode&sanitize=true" align=middle width=230.18670014999998pt height=27.94539330000001pt/>. 
 
-where 
 
-also linear fractional programs too where the minimization objective is replaced with <img src="/tex/19ffd9b9832df33f02b2d35e752c83c9.svg?invert_in_darkmode&sanitize=true" align=middle width=73.1978412pt height=37.92139230000001pt/>. 
+## Problem Interfaces
+We provide interfaces to simplify using CORDS for common optimization objectives including:
+* [minimum power consumption](/src/interfaces/min_power_consumption.m)
+* [minimum mass](/src/interfaces/min_mass.m)
+* [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
+* [minimum peak torque](/src/interfaces/min_peak_torque.m)
 
 
 ## A simple example - minimizing joule heating 
@@ -38,6 +44,8 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.r0 = [];
 >> data.T = [];      % simple case, no x variable 
 >> data.tau_c = tau_des;
+>> data.I_max = 80;  % set 80 Amp current limit
+>> data.V_max = 24;  % set 24 volt voltage limit 
 ```
 We now pass this data to the CORDS optimizer
 ```
@@ -45,12 +53,13 @@ We now pass this data to the CORDS optimizer
 >> prob.update_problem(data);    % attach the data to the problem
 >> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
 ```
-## adding optimal parallel elasticity
+### ...adding optimal parallel elasticity
 If we add a parallel elastic element with stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> our torque equality becomes
-<p align="center"><img src="/tex/9cd212a7e6bf780596bd55687c31999a.svg?invert_in_darkmode&sanitize=true" align=middle width=323.4032736pt height=17.031940199999998pt/></p>
-letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> 
+<p align="center"><img src="/tex/9f504a77ad210a66062f24124eb64a2a.svg?invert_in_darkmode&sanitize=true" align=middle width=318.51739589999994pt height=17.031940199999998pt/></p>
+letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode the paraellel stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/>,  
+
 ```
->> data.T = [-1];      % include coupling of torque  
+>> data.T = [theta];      % include coupling of motor torque and spring torque
 >> data.tau_c = tau_des; 
 ```
 
@@ -69,7 +78,7 @@ add to matlab path
 
 ## Documentation 
 
-Detailed documentation for CORDS can be acessed by tpying
+Detailed documentation for CORDS can be acessed by typing
 ```
 >> doc cords
 ```
@@ -81,22 +90,8 @@ at the Matlab command prompt.
 
 
 
-Also a PDF
 
-some pdf and also embedded in matlab too 
-
-some sweet gifs 
-
-## Problem Interfaces
-We also provide interfaces to simplify using CORDS for common optimization objective including:
-* [minimum power consumption](/src/interfaces/min_power_consumption.m)
-* [minimum mass](/src/interfaces/min_mass.m)
-* [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
-* [minimum peak torque](/src/interfaces/min_peak_torque.m)
-
-
-
-Using CORDS in your research cite our not yet extant paper: 
+Using CORDS in your research? Cite our not yet extant paper: 
 ```
 
 formated bib.tex
