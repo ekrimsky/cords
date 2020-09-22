@@ -21,7 +21,7 @@ CORDS can solve any motor/gearbox selection that can be cast as the problem type
 Specifically CORDS solves 
 $$
 \begin{align*}
-   \text{minimize} \quad  I^T Q_0 I  + c_0^T I + x^T M_0 x &+ r_0^T x + \beta_0      \\
+\underset{x, I}{\text{minimize}} \quad  I^T Q_0 I  + c_0^T I + x^T M_0 x &+ r_0^T x + \beta_0      \\
    \text{subject to} \quad \qquad \qquad \qquad \qquad \qquad &                  \\
       \text{motor/gearbox output torque}  &=   T x + \tau_c                      \\
  \end{align*}
@@ -36,7 +36,7 @@ $$
 \end{align*}
 $$
 
-with $\omega, I \in \mathbf{R}^n$ and $x \in \mathbf{R}^w$ where the inputs satsify: 
+with motor currents $I \in \mathbf{R}^n$ and auxiliary varaibles $x \in \mathbf{R}^w$ where the inputs satsify: 
 * $Q_j \in \mathbf{R}^{n \times n}$, diagonal PSD matrix for $j = 0...m$
 * $M_0 \in \mathbf{R}^{w \times w}$, symmetric PSD
 * $M_j \in \mathbf{R}^{w \times w}$, symmetric PSD or encodes SOC constraint (see cords.update_problem)
