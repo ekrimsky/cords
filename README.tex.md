@@ -13,30 +13,36 @@ CORDS requires the user to specify a trajectory of robot joint velocities $\omeg
 
 ## What can CORDS solve?  
 
+CORDS 
 a human explanation before math 
 
-interface to second order cone pr
-split out optional constraints 
+Specifically CORDS solves 
 $$
 \begin{align*}
    \text{minimize} \quad  I^T Q_0 I  + c_0 I + x^T M_0 x &+ r_0 x + \beta_0      \\
-   \text{subject to}\quad \qquad \qquad &                                                \\
-      \text{motor/gearbox output torque}  &=   T x + \tau_c            \\
+   \text{subject to} \qquad \qquad \qquad \qquad \qquad &                        \\
+      \text{motor/gearbox output torque}  &=   T x + \tau_c                      \\
  \end{align*}
  $$ 
  with optional contraints 
  $$ 
  \begin{align*}
-            I^T Q_j I + c_j^T I +  x^T M_j x + r_j^T x + \beta_j &\leq 0,\quad \text{for}\;j = 1\ldotsm \\
-           G_{eq} x + h_{eq} &= 0                                              \\
-           G_{ineq} x + h_{ineq} &\preceq 0                              \\
-       x_{lb} \preceq x &\preceq x_{ub}                         \\
+            I^T Q_j I + c_j^T I +  x^T M_j x + r_j^T x + \beta_j &\leq 0,\quad \text{for}\;j = 1...m \\
+           G_{eq} x + h_{eq} &= 0                                                            \\
+           G_{ineq} x + h_{ineq} &\preceq 0                                                  \\
+                x_{lb} \preceq x &\preceq x_{ub}                                             \\
 \end{align*}
 $$
+where the inputs constrinats .. 
+CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(r_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(r_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
 
-where 
 
-also linear fractional programs too where the minimization objective is replaced with $\frac{r_{\text{num}}^T x + b_{\text{num}}}{r_{\text{den}}^T x + b_{\text{den}}}$. 
+## Problem Interfaces
+We provide interfaces to simplify using CORDS for common optimization objectives including:
+* [minimum power consumption](/src/interfaces/min_power_consumption.m)
+* [minimum mass](/src/interfaces/min_mass.m)
+* [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
+* [minimum peak torque](/src/interfaces/min_peak_torque.m)
 
 
 ## A simple example - minimizing joule heating 
@@ -51,6 +57,8 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.r0 = [];
 >> data.T = [];      % simple case, no x variable 
 >> data.tau_c = tau_des;
+>> data.I_max = 80;  % set 80 Amp current limit
+>> data.V_max = 24;  % set 24 volt voltage limit 
 ```
 We now pass this data to the CORDS optimizer
 ```
@@ -58,14 +66,15 @@ We now pass this data to the CORDS optimizer
 >> prob.update_problem(data);    % attach the data to the problem
 >> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
 ```
-## adding optimal parallel elasticity
+### ...adding optimal parallel elasticity
 If we add a parallel elastic element with stiffness $k_p$ our torque equality becomes
 $$
-     \text{motor/gearbox output torque}  = tau_{des} - k_p \theta  
+     \text{motor/gearbox output torque}  = - k_p \theta  + \tau_{des} 
 $$
-letting the optimation vector $x$ encode $k_p$ 
+letting the optimation vector $x$ encode the paraellel stiffness $k_p$,  
+
 ```
->> data.T = [-1];      % include coupling of torque  
+>> data.T = [theta];      % include coupling of motor torque and spring torque
 >> data.tau_c = tau_des; 
 ```
 
@@ -84,7 +93,7 @@ add to matlab path
 
 ## Documentation 
 
-Detailed documentation for CORDS can be acessed by tpying
+Detailed documentation for CORDS can be acessed by typing
 ```
 >> doc cords
 ```
@@ -96,22 +105,8 @@ at the Matlab command prompt.
 
 
 
-Also a PDF
 
-some pdf and also embedded in matlab too 
-
-some sweet gifs 
-
-## Problem Interfaces
-We also provide interfaces to simplify using CORDS for common optimization objective including:
-* [minimum power consumption](/src/interfaces/min_power_consumption.m)
-* [minimum mass](/src/interfaces/min_mass.m)
-* [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
-* [minimum peak torque](/src/interfaces/min_peak_torque.m)
-
-
-
-Using CORDS in your research cite our not yet extant paper: 
+Using CORDS in your research? Cite our not yet extant paper: 
 ```
 
 formated bib.tex
