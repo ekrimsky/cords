@@ -1,14 +1,15 @@
 # Convex Optimal Robot Drive Selection (CORDS)
 
-test text 
+Explanation of what CORDS does/is 
 
-some test math 
+check out our web interface for problems with blah blah 
 
+## What can we solve 
 
 $$
 \begin{align*}
-   \text{minimize} \qquad &I' Q0 I + c0 I + x' M_0 x + r0 x + \beta_0      \\
-   \text{subject to}                                                \\
+   \text{minimize}& \qquad I^T Q0 I + c0 I + x^T M_0 x + r_0 x + \beta_0      \\
+   \text{subject to}&                                                \\
          T x + \tau_c  & = \text{motor/gearbox output torque}           \\
             x_{lb} &\preceq x \preceq x_{ub}                         \\
            G_{eq} x &+ h_{eq} = 0                                              \\
@@ -19,22 +20,36 @@ $$
 
 
 
-## What is CORDS? 
 
-## What can we solve 
+
 
 ## Requirements
 
-* Matlab 20something or later
-* [Gurobi](https://www.gurobi.com/academia/academic-program-and-licenses/) or ECOS(https://github.com/embotech/ecos)
+* Matlab 20something or later, ill figure it out 
+* [Gurobi](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
 
 
 ## Installation
 
-some explanation of how to install 
+clone or download 
+add to matlab path 
+
+
 
 
 ## Documentation 
+
+Detailed documentation for CORDS can be acessed by tpying
+```
+>> doc cords
+```
+or 
+```
+>> help cords
+```
+at the Matlab command prompt. 
+
+Also a PDF
 
 some pdf and also embedded in matlab too 
 
@@ -44,11 +59,12 @@ math on math on math
 
 some sweet gifs 
 
-## Problem Interfaces  (rename)
-* [minimum power consumption](min_power_consumption.m)
-* [minimum mass](min_mass.m)
-* [minimum effective inertia](min_effective_inertia.m)
-* [minimum peak torque](min_peak_torque.m)
+## Problem Interfaces
+We also provide interfaces to simplify using 
+* [minimum power consumption](/src/interfaces/min_power_consumption.m)
+* [minimum mass](/src/interfaces/min_mass.m)
+* [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
+* [minimum peak torque](/src/interfaces/min_peak_torque.m)
 
 
 
