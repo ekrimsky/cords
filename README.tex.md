@@ -13,14 +13,16 @@ CORDS requires the user to specify a trajectory of robot joint velocities $\omeg
 
 ## What can CORDS solve?  
 
-CORDS 
-a human explanation before math 
+CORDS can solve any motor/gearbox selection that can be cast as the problem type below. This can include optimizing much more than motors/gearboxes such as battery mass, parallel springs, or robot size. We reccomend that users utilize the code provided in [examples](examples) to get started using CORDS. These example problems include
+ *[optimizing parallel elasticity for minimal power consumption](examples/example1.m)
+ *[optimizing battery mass to maximize run time for a quadruped robot](examples/example2.m)
+ *[optimizing exoskeleton design parameters]
 
 Specifically CORDS solves 
 $$
 \begin{align*}
    \text{minimize} \quad  I^T Q_0 I  + c_0 I + x^T M_0 x &+ r_0 x + \beta_0      \\
-   \text{subject to} \qquad \qquad \qquad \qquad \qquad &                        \\
+   \text{subject to} \quad \qquad \qquad \qquad \qquad \qquad &                  \\
       \text{motor/gearbox output torque}  &=   T x + \tau_c                      \\
  \end{align*}
  $$ 
@@ -33,7 +35,11 @@ $$
                 x_{lb} \preceq x &\preceq x_{ub}                                             \\
 \end{align*}
 $$
-where the inputs constrinats .. 
+where the inputs constrinats satsify: 
+* foo 
+* bar $r + 5$ 
+* baz 
+
 CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(r_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(r_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
 
 
@@ -71,25 +77,23 @@ If we add a parallel elastic element with stiffness $k_p$ our torque equality be
 $$
      \text{motor/gearbox output torque}  = - k_p \theta  + \tau_{des} 
 $$
-letting the optimation vector $x$ encode the paraellel stiffness $k_p$,  
+
+letting the optimation vector $x$ encode the paraellel stiffness $k_p$, why wont this stay on one line   
 
 ```
 >> data.T = [theta];      % include coupling of motor torque and spring torque
 >> data.tau_c = tau_des; 
 ```
 
-
-
 ## Requirements
-
 * Matlab 20something or later, ill figure it out 
-* [Gurobi](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
-
+* [Gurobi 8.0 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
+Gurobi offers better performance than the ECOS solver but is only free for academic use. 
 
 ## Installation
 
-clone or download 
-add to matlab path 
+clone or download   TODO ( test on another laptop) 
+add to matlab path  TODO 
 
 ## Documentation 
 
