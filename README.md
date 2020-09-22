@@ -1,6 +1,6 @@
 # Convex Optimal Robot Drive Selection (CORDS)
 
-CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization (phrasing) over motor and gearboxes specified in a [motor/gearbox data base folder](database). 
+CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over motor and gearbox combinations specified in a [motor/gearbox data base folder](database). 
 
 The database includes this/that and is always getting bigger and we encourage users to add to it (add links), Likely want this to be its own repo hosted in the database folder. 
 * Maxon
@@ -8,8 +8,7 @@ The database includes this/that and is always getting bigger and we encourage us
 * Tmotor 
 * Allied Motion 
 
-CORDS requires the user to specify a trajectory of robot joint velocities <img src="/tex/ae4fb5973f393577570881fc24fc2054.svg?invert_in_darkmode&sanitize=true" align=middle width=10.82192594999999pt height=14.15524440000002pt/> and to parametrize the desired joint torques through an optimization problem (rephrase). For simple cases where both the joint trajectory and the joint torques are known, check out the CORDS web interface (A LINK). 
-
+CORDS requires the user to specify a trajectory of robot joint velocities <img src="/tex/ae4fb5973f393577570881fc24fc2054.svg?invert_in_darkmode&sanitize=true" align=middle width=10.82192594999999pt height=14.15524440000002pt/> and to parametrize the desired joint torques through an optimization problem. For simple cases where both the joint trajectory and the joint torques are known, check out the CORDS web interface (A LINK). 
 
 
 ## What can CORDS solve?  
@@ -17,13 +16,45 @@ CORDS requires the user to specify a trajectory of robot joint velocities <img s
 a human explanation before math 
 
 interface to second order cone pr
-
+split out optional constraints 
 <p align="center"><img src="/tex/1bf1572803d4ac765d162fd8ab2eb758.svg?invert_in_darkmode&sanitize=true" align=middle width=551.53841655pt height=169.57442534999998pt/></p>
 
 where 
 
 also linear fractional programs too where the minimization objective is replaced with <img src="/tex/19ffd9b9832df33f02b2d35e752c83c9.svg?invert_in_darkmode&sanitize=true" align=middle width=73.1978412pt height=37.92139230000001pt/>. 
 
+
+## A simple example - minimizing joule heating 
+First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. 
+```
+>> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
+>> data.omega = omega;
+>> data.omega_dot = omega; 
+>> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
+>> data.c0 = [];
+>> data.M0 = [];
+>> data.r0 = [];
+>> data.tau_c = tau_des;
+>> data.T = [];      % simple case, no x variable 
+```
+We now pass this data to the CORDS optimizer
+```
+>> prob = cords();   % create a new cords object with default settings  
+>> prob.update_problem(data);    % attach the data to the problem
+>> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
+```
+## A less simple example - minimizing joule heating with parallel elasticity
+```
+>> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
+>> data.omega = omega;
+>> data.omega_dot = omega; 
+>> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
+>> data.c0 = [];
+>> data.M0 = [];
+>> data.r0 = [];
+>> data.tau_c = tau_des;
+>> data.T = [];      % simple case, no x variable 
+```
 
 
 
@@ -55,23 +86,6 @@ at the Matlab command prompt.
 Also a PDF
 
 some pdf and also embedded in matlab too 
-
-## A simple example - minimizing joule heating 
-```
->> code 
->> code 
->> and more code 
->> and even more code
-```
-soething something 
-math on math on math 
-```
->> code 
->> code 
->> and more code 
->> and even more code
-```
-
 
 some sweet gifs 
 
