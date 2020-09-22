@@ -8,16 +8,17 @@ check out our web interface for problems with blah blah
 
 $$
 \begin{align*}
-   \text{minimize}& \qquad I^T Q0 I + c0 I + x^T M_0 x + r_0 x + \beta_0      \\
-   \text{subject to}&                                                \\
+   \text{minimize} \quad & I^T Q_0 I + c_0 I + x^T M_0 x + r_0 x + \beta_0      \\
+   \text{subject to}\quad &                                                \\
          T x + \tau_c  & = \text{motor/gearbox output torque}           \\
-            x_{lb} &\preceq x \preceq x_{ub}                         \\
+            I^T Q_j I + c_j^T I + & x^T M_j x + r_j^T x + \beta_j \leq 0,\quad \text{for}\;j = 1\ldotsm \\
            G_{eq} x &+ h_{eq} = 0                                              \\
            G_{ineq} &x + h_{ineq} \preceq 0                              \\
-     I^T Q_j I + c_j^T I + & x^T M_j x + r_j^T x + \beta_j \leq 0,\quad \text{for} j = 1...m \\
+       x_{lb} &\preceq x \preceq x_{ub}                         \\
 \end{align*}
 $$
 
+where 
 
 
 
