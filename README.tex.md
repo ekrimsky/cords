@@ -36,10 +36,10 @@ $$
 \end{align*}
 $$
 
-with $\omega, I \in \mathbf{R}^n$ and $x \ in \mathbf{R}^w$ where the inputs satsify: 
+with $\omega, I \in \mathbf{R}^n$ and $x \in \mathbf{R}^w$ where the inputs satsify: 
 * $Q_j \in \mathbf{R}^{n \times n}$, diagonal PSD matrix for $j = 0...m$
 * $M_0 \in \mathbf{R}^{w \times w}$, symmetric PSD
-* $M_j \in \mathbf{R}^{w \times w}$, symmetric PSD OR encodes SOC constraint (see cords.update_problem)
+* $M_j \in \mathbf{R}^{w \times w}$, symmetric PSD or encodes SOC constraint (see cords.update_problem)
 * $c_j \in \mathbf{R}^n$ satisfies $c_{j}^{i} \omega^i \geq 0$ for $j = 1...m$ and $i = 1...n$
 
 CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(r_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(r_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
@@ -80,7 +80,7 @@ $$
      \text{motor/gearbox output torque}  = - k_p \theta  + \tau_{des} 
 $$
 
-letting the optimation vector $x$ encode the paraellel stiffness $k_p$  ffffffffffff:
+letting the optimation vector $x$ encode the paraellel stiffness $k_p$ :
 
 ```
 >> data.T = [theta];      % include coupling of motor torque and spring torque
