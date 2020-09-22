@@ -23,10 +23,10 @@ Specifically CORDS solves
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
 
-with <img src="/tex/bee26f84df30aa6135fde80374347be3.svg?invert_in_darkmode&sanitize=true" align=middle width=69.03892379999998pt height=22.55708729999998pt/> and <img src="/tex/60a3cdfb8e3afa950a755cf46d0acc30.svg?invert_in_darkmode&sanitize=true" align=middle width=54.401864549999985pt height=22.55708729999998pt/> where the inputs satsify: 
+with <img src="/tex/bee26f84df30aa6135fde80374347be3.svg?invert_in_darkmode&sanitize=true" align=middle width=69.03892379999998pt height=22.55708729999998pt/> and <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the inputs satsify: 
 * <img src="/tex/bad8cbb55822df2eb7bbf59df6190e30.svg?invert_in_darkmode&sanitize=true" align=middle width=80.71703969999999pt height=26.17730939999998pt/>, diagonal PSD matrix for <img src="/tex/52c03ebb6ac0c8e7f1261d96409b7cbc.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/>
 * <img src="/tex/1e47cf05617b340cea169d5c16925949.svg?invert_in_darkmode&sanitize=true" align=middle width=87.50376194999998pt height=26.17730939999998pt/>, symmetric PSD
-* <img src="/tex/6f41c62b5c2794bfa9a2bef8f734c971.svg?invert_in_darkmode&sanitize=true" align=middle width=87.05570445pt height=26.17730939999998pt/>, symmetric PSD OR encodes SOC constraint (see cords.update_problem)
+* <img src="/tex/6f41c62b5c2794bfa9a2bef8f734c971.svg?invert_in_darkmode&sanitize=true" align=middle width=87.05570445pt height=26.17730939999998pt/>, symmetric PSD or encodes SOC constraint (see cords.update_problem)
 * <img src="/tex/7da0268045d75f2db625838ec284e453.svg?invert_in_darkmode&sanitize=true" align=middle width=56.43537569999998pt height=22.55708729999998pt/> satisfies <img src="/tex/36b3758fe61b44487e6516f9d2e71001.svg?invert_in_darkmode&sanitize=true" align=middle width=60.47175089999999pt height=27.15900329999998pt/> for <img src="/tex/4884e50c3bb19744ca6785efc67fe03c.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/> and <img src="/tex/be4dba4d5583203f4f9d3bee918a2c9e.svg?invert_in_darkmode&sanitize=true" align=middle width=59.365615649999995pt height=21.68300969999999pt/>
 
 CORDS can also solve linear fractional programs where the minimization objective is replaced with <img src="/tex/b923d55946fe7624d6802fc5c79a0dda.svg?invert_in_darkmode&sanitize=true" align=middle width=230.18670014999998pt height=27.94539330000001pt/>. 
@@ -65,7 +65,7 @@ We now pass this data to the CORDS optimizer
 If we add a parallel elastic element with stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> our torque equality becomes
 <p align="center"><img src="/tex/9f504a77ad210a66062f24124eb64a2a.svg?invert_in_darkmode&sanitize=true" align=middle width=318.51739589999994pt height=17.031940199999998pt/></p>
 
-letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode the paraellel stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/>  ffffffffffff:
+letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode the paraellel stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> :
 
 ```
 >> data.T = [theta];      % include coupling of motor torque and spring torque
