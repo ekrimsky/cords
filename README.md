@@ -17,7 +17,7 @@ a human explanation before math
 
 interface to second order cone pr
 split out optional constraints 
-<p align="center"><img src="/tex/8cfdd0167078b99ea4030af63d81e5f8.svg?invert_in_darkmode&sanitize=true" align=middle width=493.15692525000003pt height=169.57442534999998pt/></p>
+<p align="center"><img src="/tex/ef10577ea74a5e83fb58bb65d56cb8a0.svg?invert_in_darkmode&sanitize=true" align=middle width=445.39951664999995pt height=169.57442534999998pt/></p>
 
 where 
 
@@ -27,7 +27,6 @@ also linear fractional programs too where the minimization objective is replaced
 ## A simple example - minimizing joule heating 
 First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. 
 ```
-{
 >> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
 >> data.omega = omega;
 >> data.omega_dot = omega; 
@@ -37,15 +36,12 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.r0 = [];
 >> data.tau_c = tau_des;
 >> data.T = [];      % simple case, no x variable 
-}
 ```
 We now pass this data to the CORDS optimizer
 ```
-{
 >> prob = cords();   % create a new cords object with default settings  
 >> prob.update_problem(data);    % attach the data to the problem
 >> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
-}
 ```
 ## A less simple example - minimizing joule heating with parallel elasticity
 ```
