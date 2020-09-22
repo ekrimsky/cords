@@ -24,8 +24,8 @@ $$
       \text{motor/gearbox output torque}  &=   T x + \tau_c            \\
             I^T Q_j I + c_j^T I +  x^T M_j x + r_j^T x + \beta_j &\leq 0,\quad \text{for}\;j = 1\ldotsm \\
            G_{eq} x + h_{eq} &= 0                                              \\
-           G_{ineq} &x + h_{ineq} &\preceq 0                              \\
-       x_{lb} &\preceq x &\preceq x_{ub}                         \\
+           G_{ineq} x + h_{ineq} &\preceq 0                              \\
+       x_{lb} \preceq x &\preceq x_{ub}                         \\
 \end{align*}
 $$
 
@@ -37,6 +37,7 @@ also linear fractional programs too where the minimization objective is replaced
 ## A simple example - minimizing joule heating 
 First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. 
 ```
+{
 >> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
 >> data.omega = omega;
 >> data.omega_dot = omega; 
@@ -46,12 +47,15 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.r0 = [];
 >> data.tau_c = tau_des;
 >> data.T = [];      % simple case, no x variable 
+}
 ```
 We now pass this data to the CORDS optimizer
 ```
+{
 >> prob = cords();   % create a new cords object with default settings  
 >> prob.update_problem(data);    % attach the data to the problem
 >> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
+}
 ```
 ## A less simple example - minimizing joule heating with parallel elasticity
 ```
