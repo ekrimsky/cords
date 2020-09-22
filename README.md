@@ -23,10 +23,10 @@ Specifically CORDS solves
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
 
-where the inputs constrinats satsify: 
-*  foo 
-*  bar <img src="/tex/4a14bde29d3b56e4f0c2b39aa1cf527c.svg?invert_in_darkmode&sanitize=true" align=middle width=36.18335654999999pt height=21.18721440000001pt/> 
-*  baz 
+where the inputs satsify: 
+* foo 
+* bar <img src="/tex/4a14bde29d3b56e4f0c2b39aa1cf527c.svg?invert_in_darkmode&sanitize=true" align=middle width=36.18335654999999pt height=21.18721440000001pt/> 
+* baz 
 
 CORDS can also solve linear fractional programs where the minimization objective is replaced with <img src="/tex/b923d55946fe7624d6802fc5c79a0dda.svg?invert_in_darkmode&sanitize=true" align=middle width=230.18670014999998pt height=27.94539330000001pt/>. 
 
