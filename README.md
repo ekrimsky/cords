@@ -13,14 +13,20 @@ CORDS requires the user to specify a trajectory of robot joint velocities <img s
 
 ## What can CORDS solve?  
 
-CORDS 
-a human explanation before math 
+CORDS can solve any motor/gearbox selection that can be cast as the problem type below. This can include optimizing much more than motors/gearboxes such as battery mass, parallel springs, or robot size. We reccomend that users utilize the code provided in [examples](examples) to get started using CORDS. These example problems include
+ *[optimizing parallel elasticity for minimal power consumption](examples/example1.m)
+ *[optimizing battery mass to maximize run time for a quadruped robot](examples/example2.m)
+ *[optimizing exoskeleton design parameters]
 
 Specifically CORDS solves 
-<p align="center"><img src="/tex/3d12c8bf484eeb4b4377e81b4eca745e.svg?invert_in_darkmode&sanitize=true" align=middle width=324.90884415pt height=68.07495089999999pt/></p> 
+<p align="center"><img src="/tex/85bc9f9ad5f8a03ad3d5723a8a02fbb8.svg?invert_in_darkmode&sanitize=true" align=middle width=332.82178545pt height=68.07495089999999pt/></p> 
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
-where the inputs constrinats .. 
+where the inputs constrinats satsify: 
+* foo 
+* bar <img src="/tex/4a14bde29d3b56e4f0c2b39aa1cf527c.svg?invert_in_darkmode&sanitize=true" align=middle width=36.18335654999999pt height=21.18721440000001pt/> 
+* baz 
+
 CORDS can also solve linear fractional programs where the minimization objective is replaced with <img src="/tex/b923d55946fe7624d6802fc5c79a0dda.svg?invert_in_darkmode&sanitize=true" align=middle width=230.18670014999998pt height=27.94539330000001pt/>. 
 
 
@@ -56,25 +62,23 @@ We now pass this data to the CORDS optimizer
 ### ...adding optimal parallel elasticity
 If we add a parallel elastic element with stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> our torque equality becomes
 <p align="center"><img src="/tex/9f504a77ad210a66062f24124eb64a2a.svg?invert_in_darkmode&sanitize=true" align=middle width=318.51739589999994pt height=17.031940199999998pt/></p>
-letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode the paraellel stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/>,  
+
+letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode the paraellel stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/>, why wont this stay on one line   
 
 ```
 >> data.T = [theta];      % include coupling of motor torque and spring torque
 >> data.tau_c = tau_des; 
 ```
 
-
-
 ## Requirements
-
 * Matlab 20something or later, ill figure it out 
-* [Gurobi](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
-
+* [Gurobi 8.0 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
+Gurobi offers better performance than the ECOS solver but is only free for academic use. 
 
 ## Installation
 
-clone or download 
-add to matlab path 
+clone or download   TODO ( test on another laptop) 
+add to matlab path  TODO 
 
 ## Documentation 
 
