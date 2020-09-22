@@ -14,12 +14,12 @@ CORDS requires the user to specify a trajectory of robot joint velocities <img s
 ## What can CORDS solve?  
 
 CORDS can solve any motor/gearbox selection that can be cast as the problem type below. This can include optimizing much more than motors/gearboxes such as battery mass, parallel springs, or robot size. We reccomend that users utilize the code provided in [examples](examples) to get started using CORDS. These example problems include
- *[optimizing parallel elasticity for minimal power consumption](examples/example1.m)
- *[optimizing battery mass to maximize run time for a quadruped robot](examples/example2.m)
- *[optimizing exoskeleton design parameters]
+ * [optimizing parallel elasticity for minimal power consumption](examples/example1.m)
+ * [optimizing battery mass to maximize run time for a quadruped robot](examples/example2.m)
+ * [optimizing exoskeleton design parameters]
 
 Specifically CORDS solves 
-<p align="center"><img src="/tex/85bc9f9ad5f8a03ad3d5723a8a02fbb8.svg?invert_in_darkmode&sanitize=true" align=middle width=332.82178545pt height=68.07495089999999pt/></p> 
+<p align="center"><img src="/tex/7665dadf4e306fda04f5cdc79623abd2.svg?invert_in_darkmode&sanitize=true" align=middle width=336.2595522pt height=68.07495089999999pt/></p> 
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
 where the inputs constrinats satsify: 
