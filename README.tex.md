@@ -19,9 +19,14 @@ interface to second order cone pr
 split out optional constraints 
 $$
 \begin{align*}
-   \text{minimize} \quad  I^T Q_0 I & + c_0 I + x^T M_0 x + r_0 x + \beta_0      \\
-   \text{subject to}\quad \qquad &                                                \\
+   \text{minimize} \quad  I^T Q_0 I  + c_0 I + x^T M_0 x &+ r_0 x + \beta_0      \\
+   \text{subject to}\quad \qquad \qquad &                                                \\
       \text{motor/gearbox output torque}  &=   T x + \tau_c            \\
+ \end{align*}
+ $$ 
+ with optional contraints 
+ $$ 
+ \begin{align*}
             I^T Q_j I + c_j^T I +  x^T M_j x + r_j^T x + \beta_j &\leq 0,\quad \text{for}\;j = 1\ldotsm \\
            G_{eq} x + h_{eq} &= 0                                              \\
            G_{ineq} x + h_{ineq} &\preceq 0                              \\
@@ -35,7 +40,7 @@ also linear fractional programs too where the minimization objective is replaced
 
 
 ## A simple example - minimizing joule heating 
-First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. 
+First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. Minimizing joule heating means minimizing $\sum_{i = 1}^{n} R (I^{i})^2$ where $R$ is the motor resistance and $I^{i}$ is the current at timestep $i$. 
 ```
 >> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
 >> data.omega = omega;
@@ -44,8 +49,8 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.c0 = [];
 >> data.M0 = [];
 >> data.r0 = [];
->> data.tau_c = tau_des;
 >> data.T = [];      % simple case, no x variable 
+>> data.tau_c = tau_des;
 ```
 We now pass this data to the CORDS optimizer
 ```
@@ -53,17 +58,15 @@ We now pass this data to the CORDS optimizer
 >> prob.update_problem(data);    % attach the data to the problem
 >> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
 ```
-## A less simple example - minimizing joule heating with parallel elasticity
+## adding optimal parallel elasticity
+If we add a parallel elastic element with stiffness $k_p$ our torque equality becomes
+$$
+     \text{motor/gearbox output torque}  = tau_{des} - k_p \theta  
+$$
+letting the optimation vector $x$ encode $k_p$ 
 ```
->> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
->> data.omega = omega;
->> data.omega_dot = omega; 
->> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
->> data.c0 = [];
->> data.M0 = [];
->> data.r0 = [];
->> data.tau_c = tau_des;
->> data.T = [];      % simple case, no x variable 
+>> data.T = [-1];      % include coupling of torque  
+>> data.tau_c = tau_des; 
 ```
 
 
