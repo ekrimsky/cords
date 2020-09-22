@@ -6,8 +6,9 @@ check out our web interface for problems with blah blah
 
 ## What can we solve 
 
-<p align="center"><img src="/tex/479d3552cada3da899b0bdea29fddb9e.svg?invert_in_darkmode&sanitize=true" align=middle width=384.3677838pt height=171.38275274999998pt/></p>
+<p align="center"><img src="/tex/6d201dda3800146b1e0aefb5570ff84f.svg?invert_in_darkmode&sanitize=true" align=middle width=358.1959557pt height=169.57442534999998pt/></p>
 
+where 
 
 
 
