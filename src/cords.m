@@ -1,60 +1,97 @@
 classdef cords < handle 
-% CORDS (Convex Optimal Robot Drive Selection)    blah bla
-%      Summary goes here  
+% CORDS (Convex Optimal Robot Drive Selection)    
+%      
+%   CORDS is a tool for selecting motors and gearboxes for robotic applications.
+%   The optimization is performed over a motor and gearbox database that needs
+%   to be in the CORDS search path. 
 %
+%   prob = CORDS() creates a new CORDS object with default settings
+%   
+%   CORDS can be instantiated with a number of key value pairs for example:
 %
-%   prob = CORDS() does a
+%   prob = CORDS('settings', settings) creates a CORDS object with custom 
+%   settings specified in a settings struct 
 %
-%   prob = CORDS('settings', settings, 'solve_settings') or something does another thing
+%   prob = CORDS('mgdb_path', 'Docuements/foo'), sets a non-default path to 
+%   search for the mgdb (Motor Gearbox DataBase). 
 %
+%   prob = CORDS('reuse_db', false) will cause CORDS to create new MGDB from the
+%   motor and gearbox files in the folder named MGDB on the search path 
 %
-% CORDS Properties:
-%     settings       - struct, controls which solver, print outs, etc     
-%     tolerances - struct, controls numerical tolerances and thresholds for solving
-%     physics - write me 
-%     filters - write me 
-%     problem_data   - struct, the data for the problem we are solving 
-%     problem_type   - 'standard' (convex), or 'fractional' (quasi-convex)
-%     mg_database    - mgdb (Motor Gearbox DataBase) object with motor/gearbox data
+%   prob = CORDS('reuse_db', true) will load the saved database from a previous
+%   optimization run. This reorders the motor/gearbox combination using the 
+%   results from the previous optimization run to improve speed.
+%
+%   prob = CORDS('mgdb_file_path', new_file_path) will overwrite the default 
+%   location to look for motor and gearbox files to build a new database from. 
+%
+%   prob = CORDS('mgdb_mat_path', new_mat_path) will overwrite the default 
+%   directory on where to search for a file called 'mg_database.mat' that has 
+%   saved results from a previous optimization run. 
+%   
+%   
+%   Solving a motor/gearbox optimization with CORDS looks like the following:
+%    >> prob = CORDS()      % create a CORDS object with default settings 
+%    >> my_data = data_struct (see  'update_problem' in the CORDS methods below)
+%    >> prob.update_problem(my_data)        % add your custom data 
+%    >> solutions = prob.optimize(100)      %  calculate the 100 best solutions
 %
 % CORDS Methods:
-%       update_problem  - updates the data for the problem 
-%       optimize        - runs the optimization procedure using the loaded data 
-%       update_settings - 
-%       update_tolerances -
-%       update_physics -
-%       update_filters - 
+%       update_problem    - updates the data for the problem 
+%       optimize          - runs the optimization using the loaded data 
+%       update_settings   - updates what solver to use and whats printed out
+%       update_physics    - updates physics settings (eg. friction and inertia)
+%       update_filters    - updates additional criteria for motors gearboxes
+%       update_tolerances - updates numerical tolerances in solving problems
 %
-%   Straight up an actual explanation of some of the math and an instruction to 
-%   look at the help for the methods 
-%   
-%   NOTE: can we think of a real reason to not combine update problem and optimize?
-%   One potential reason (although we dont have this functionality yet) is if we 
-%   wanted to opitimize and then change a setting or something (think on this more)
+% CORDS Properties:
+%     settings     - see update_settings in CORDS methods      
+%     physics      - see update_physics in CORDS methods 
+%     filters      - see update_filters in CORDS methods 
+%     tolerances   - see update_tolerances in CORDS methods
+%     problem_data - struct, the data for the problem we are solving 
+%     problem_type - 'standard' (convex), or 'fractional' (quasi-convex)
+%     mg_database  - mgdb (Motor Gearbox DataBase) object with motor/gearbox data
 %
-%   Blah. blah. blah 
 %
-%   A reference to the github
 %
+%
+%   What kind of problems can optimize solve with CORDS?
+%     see our documentation but in short.....
+%       see documnetion for update problelm for details on valud problem inputs 
+%
+%   minimize I'*Q0*I + c0'*I + x'*M0*x + r0'*x + beta0
+%   subject to: 
+%         T*x + tau_c = motor/gearbox output torque 
+%            x_lb <= x <= x_ub
+%           G*x + h = 0
+%           G_ineq*x + h_ineq <= 0
+%     I'*Qj*I + cj'*I + x'*Mj*x + rj'*x + betaj <= 0, for j = 1...m 
+%
+%   where -- the requirements on the inputs 
+%
+%   A reference to the github:
 %   A reference to the eventual paper 
-%
+%   
+%   Something about the license (GPL or MIT or Apache)
+%   Copyright something something
 %
 %   Author: 
 %       Erez Krimsky, ekrimsky@stanford.edu, 7/27/20
 %       Stanford University, Biomechatronics Lab 
 %
 %
+%   Several interfaces (TODO) for CORDS simple problems inlcudeing 
 %
-%   See also MGDB
+%   See also MGDB, MIN_POWER_CONSUMPTION, MIN_MASS
 properties (GetAccess = public, SetAccess = private)
     settings        %  for solver, verbose, print frequency
     tolerances  % numerical tolerances and the like  
     physics     % physics settings 
     filters         % struct of selection criteria 
-    problem_data    % data for the problem we want to solve - NOTE maybe provate 
+    problem_data    % data for the problem we want to solve 
     problem_type    % char array, 'standard' (SOCP) or 'fractional'
     mg_database     % motor gearbox database object 
-    % could add update_settings or similar -- could make it easier for people to debug issues 
 end 
 
 
@@ -64,21 +101,37 @@ methods (Access = public)
     % Constructor for the CORDS class. 
     %
  	% 	Optional Inputs (string/value pairs)
-    %  
-    %
-    % 
-    %
+    %       'reuse_db'      - true (default)/false
+    %       'mgdb_mat_path' - where to search for mg_database.mat to load where 
+    %                       to load a save mgdb object from. Also the path to 
+    %                       where the mg_database.mat file frrom this 
+    %                        opitimization run will be writen to
+    %       'mgdb_file_path'- the folder to seach in for motor/gearbox files to 
+    %                         build a new database from (is there isnt one yet)
+    %       'settings'      - see update_settings
+    %       'tolerances'    - see update_tolerances
+    %       'physics'       - see update_physics
     %
         validate_dependencies();  % make sure everything is installed 
+        % first look for a matfile called mg_database.mat that would
+        % have a saved mgdb object from a previous optimization run 
+        default_mat_path = fullfile('**', 'mg_database.mat');  
+        default_file_path = find_dirs('MGDB');  % look for a folder called mgdb  
 
         ip = inputParser; 
-        addParameter(ip, 'settings', []);
-        addParameter(ip, 'tolerances', []);
+        addParameter(ip, 'mgdb_mat_path', default_mat_path);               % Soooo, these is a difference between the path that has the files that webuild the database from AND
+        addParameter(ip, 'mgdb_file_path', default_file_path{1});               % Soooo, these is a difference between the path that has the files that webuild the database from AND
+        addParameter(ip, 'settings', []);                           % the path where we save 
+        addParameter(ip, 'tolerances', []);                             % SO -- we will have 2 seperate things -- db_mat_path () -- and db_file_path
         addParameter(ip, 'physics', []);
         addParameter(ip, 'reuse_db', true, @(x)islogical(x));
+
+
         parse(ip, varargin{:}); 
 
         reuse_db = ip.Results.reuse_db; 
+        db_mat_path = ip.Results.mgdb_mat_path;
+        db_file_path = ip.Results.mgdb_file_path; 
         obj.settings = default_settings();
         obj.tolerances = default_tolerances();
         obj.physics = default_phyics(); 
@@ -92,29 +145,26 @@ methods (Access = public)
         % If cannot find a file create one and then save it
         % Database file will get overwritten after finishing optimizatino to 
         % to reflect rankings 
-        % TODO - write a custom load or something, want to link verbosity
-
-        % TODO -- Just link it with an update settings ---- 
-
-        db_files = dir(fullfile('**', 'mg_database.mat')); 
+        old_db_files = dir(db_mat_path); 
         no_database = true; 
-        if (numel(db_files) >= 1) && reuse_db
-            if numel(db_files) > 1
+        if (numel(old_db_files) >= 1) && reuse_db
+            if numel(old_db_files) > 1
                 warning('multple motor/gearbox database files found');
             end 
-            db_file = fullfile(db_files(1).folder, db_files(1).name); 
+            old_db_file = fullfile(old_db_files(1).folder,old_db_files(1).name); 
             try
-                load(db_file, 'mg_database');
-                obj.vprintf(1, 'Loaded database from \n\t%s\n', db_file);
+                load(old_db_file, 'mg_database');
+                obj.vprintf(1, 'Loaded database from \n\t%s\n', old_db_file);
                 no_database = false; % because there is one
             catch ME
                 warning(sprintf(['No mdgb object named "mg_database" in: ',...
-                                                        '\n\t%s'], db_file));
+                                                        '\n\t%s'], old_db_file));
             end 
         end 
 
         if no_database % no database file -- create new one and save it 
-            mg_database = mgdb();
+            keyboard
+            mg_database = mgdb(db_file_path);
             db_file = fullfile(pwd, 'mg_database.mat');
             save(db_file, 'mg_database');
             obj.vprintf(1, ['New motor/gearbox database created, saved in: ',...
@@ -125,49 +175,147 @@ methods (Access = public)
         mg_settings.verbose = obj.settings.verbose; % link verbosity
         obj.mg_database.update_settings(mg_settings); 
         obj.filters = obj.mg_database.get_filters(); % start with the defaults 
-        % NOTE: might want to look for saved file that has a database object 
-        % stored away and ONLY if we cant find one, instantiate a new one
-        % the reason to do this is that reading in all the csvs can be slow 
     end %end constructor 
 
     
 
-    function update_problem(obj, problem_data)
-    % update_problem does this and that 
+    function update_problem(obj, input_data)
+    % update_problem update the problem data
+    %
+    %   There are 2 main types of problems that can be solved with cords:
+    %       1) Second Order Cone Programs (SOCPs)
+    %       2) Linear Fractional Programs with SOC constraints
+    %
+    %   See examples/example2 for an example of a linear fractional 
+    %   problem to maximize a robot's runtime.
+    %
+    %
+    %   For type 1 (SOCP) problems, cords solves
+    %               minimize    I'*Q0*I + c0'*I + x'*M0*x + r0'*x + beta0
+    %
+    %   For type 2 (linear-fractional) problems, cords solves
+    %             minimize    (r_num'*x + beta_num)/(r_den'*x + beta_den)
+    %
+    %   subject to (for both problem types): 
+    %                   T*x + tau_c = motor/gearbox output torque 
+    %                            G*x + h = 0
+    %                 G_ineq*x + h_ineq <= 0
+    %     I'*Qj*I + cj'*I + x'*Mj*x + rj'*x + betaj <= 0, for j = 1...m 
+    %                         x_lb <= x <= x_ub
+    % 
+    %   where I is an (n x 1) vector of motor currents and x is a (w x 1)
+    %   vector of user defined optimization variables. 
+    %
+    %   Inputs that rely on the motor/gearbox are given as function handle that
+    %   take the motor and gearbox as inputs. See MGDB for a list of valid
+    %   motor and gearbox properties
+    %   For example:
+    %        T = @(motor, gearbox) motor.mass * ones(n, w); % depends on motor 
+    %   If the input does not depend on the motor and gearbox it can be given
+    %   as a constant (eg. T = eye(n));
+    %       
+    %   The struct 'input_data' has the following fields:
+    %     
+    %   Required fields for either problem type:
+    %       T     - (n x w) matrix relating x variables to torques 
+    %       tau_c - (n x 1) vector of 'constant' torques  
+    %       omega -  (n x 1) vector of the joint velocity (NOTE: if using a 
+    %               gearbox this is not the same as the motor velocity) in rad/s
+    %       I_max - maximum permissible current (in Amps)
+    %       V_max - maximum available drive voltage
+    %
+    %   Optional fields optional input for either problem type:
+    %       omega_dot - (n x 1) vector of joint accelerations (rad/s^2). If 
+    %                       empty no inertial compenstation is performed  
+    %       Q         - (m x 1) CELL array where each cell contains an (n x 1)
+    %                    vector of non-negative values on the diagonal of Q. 
+    %       c         - (m x 1) CELL array where each cell contains an (n x 1)
+    %                    vector satisfying (gearbox.direction)*c.*omega >= 0
+    %       M         - (m x 1) CELL array where each cell contains a symmetric 
+    %                   sparse (w x w) matrix. Each M{i} (for i = 1:m) can take
+    %                   on 3 possible forms:
+    %                   1) Standard Quadratic - in this case M{i} is PSD 
+    %                   2) Standard Second Order Cone - in this case M{i} 
+    %                      is made up of a PSD block and a -1 on its diagonal.
+    %                      The corresponding Q{i}, c{i}, r{i} and beta{i} must 
+    %                      all be empty. 
+    %                      For example:
+    %                           M{i} = [a   0   0
+    %                                   0   b   0
+    %                                   0   0  -1],
+    %                      encodes a*x1^2 + b*x2^2 <= x3^2 (an SOC Constraint),
+    %                      where x3 is implicitly constrained to be non-negative
+    %                   3) Rotated Second Order Cone - in this case M{i} is made 
+    %                      up of a PSD block and a row column/pair that each 
+    %                      contain one non-zero on an off diagonal.
+    %                      The corresponding Q{i}, c{i}, r{i} and beta{i} must 
+    %                      all be empty. 
+    %                      For example:
+    %                          M{i} = [a    0      0
+    %                                  0    0   -0.5
+    %                                  0  -0.5     0],
+    %                      encodes a*x1^2 <= x2*x3
+    %                      where x2 and x3 are implicitly constrained to be 
+    %                      non-negative
+    %       r         - (m x 1) CELL array, each cell contains a (w x 1) vector  
+    %       beta      - (m x 1) CELL array, each cell contains one scalar       
+    %       x_lb      - (w x 1) vector of lower bounds on x (can be -inf) 
+    %       x_ub      - (w x 1) vector of upper bounds on x (can be inf)
+    %       G         - (? x w) equality constraint matrix on x 
+    %       h         - (? x 1) vector for equality constraints on x 
+    %       G_ineq    - (? x w) inequality constraint matrix on x 
+    %       h_ineq    - (? x 1) vector for inequality constraints on x
+    %       
+    %
+    %
+    %   Required fields for SOCP problems (NOTE, each can be empty):
+    %       Q0    -  (n x 1) vector of non-negative values on the diagonal of Q0       
+    %       c0    -  (n x 1) vector satisfying (gearbox.direction)*c.*omega >= 0
+    %       M0    -  sparse PSD (w x w) matrix 
+    %       r0    -  (w x 1) vector 
+    %       beta0 -  constant cost scalar 
+    %
+    %
+    %   For linear-fractional problems, the fields Q0, c0, M0, r0, beta0 should
+    %   all be left empty. 
     %   
-    %  Inputs:
-    %      problem_data 
-    %
-    %       there are a lot of possible ways 
-    %
-    %   prob.update_problem(problem_data)  
-    %
-    %doew dfgdf g
-    %sdf dsdfsd 
-    %   sdfsdfsdfs sd fsdf sdf sdf s 
+    %   Required fields for linear fractional problems:
+    %       cost_ub  - a finite upper bound on the optimal objective
+    %       cost_lb  - a finite lower bound on the optimal objective
+    %       r_num    - (w x 1) vector 
+    %       r_den    - (w x 1) vector 
+    %       beta_num - a scalar 
+    %       beta_den - a scalar 
     %
     %
-        [problem_data, problem_type] = obj.validate_problem_data(problem_data);
+    %   See the example1 code for an example on defining function handles 
+    %
+        [problem_data, problem_type] = obj.validate_problem_data(input_data);
         obj.problem_data = problem_data; 
         obj.problem_type = problem_type; 
     end 
 
     
     function [sol_structs] = optimize(obj, varargin)
-    %   optimize Do a thing dude 
+    %   Runs the actual optimization
     %
-    %   Optional Input:  
-    %       num_return - default = 1. The number of motor/gearbox combinations
-    %               and solutions to return. Returned in ascending order.
-    %               use inf to return all solutions however this will take
-    %               much longer 
+    %   optimize()      - will return only the best solution (fastest)
+    %   optimize(k)     - will return the k-best solutions
+    %   optimize(inf)   - will return ALL feasible solutions
     %
-    %   Output: sol_structs - struct array of solution with fields TODO 
-    %
-    %
-    %   The problem type is assumed from the setup (standard or fractional)
-    %
-
+    %   Returns:
+    %       sol_structs - a (k x 1) struct array with fields:
+    %           'cost' - the objective
+    %           'sol' - a struct with fields I and x (current and x vector) 
+    %                   among others
+    %           'motor' - the motors
+    %           'gearbox' - the gearboxes
+        sol_structs = struct(); % empty 
+        if ~isfield(obj, 'problem_type')
+            warning('Cannot optimize before adding problem data');
+            return;
+        end
+        
         if isempty(varargin) || isempty(varargin{1})
             num_return = 1;
         else 
@@ -178,12 +326,21 @@ methods (Access = public)
         %       Get Valod Motor/Gearbox Combinations 
         % Filtering out some options by max velocity  
         % If our specific filters are tighter than the others, use those 
-        % TODO -- update torque filters in the LP presolve
         obj.filters.omega_max = max(obj.filters.omega_max,...
                                               max(abs(obj.problem_data.omega)));
-        obj.mg_database.update_filters(obj.filters);
+        %% get bounds on torque 
+        tmp_filters = obj.filters;
+
+        [tau_peak_min, tau_rms_min] = obj.compute_torque_bounds();
+        
+        % NOTE: will want to add a way to turn these off -- could 
+        % have presetting a filter as negative inf as flag for that 
+        tmp_filters.tau_max = max(tmp_filters.tau_max, tau_peak_min);
+        tmp_filters.tau_rms = max(tmp_filters.tau_rms, tau_rms_min);
+        obj.mg_database.update_filters(tmp_filters);
 
         [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
+
         % Convert from database map keys to structs 
         for i = 1:length(motor_keys)  % slightly faster than cell fun
             motors(i) = obj.mg_database.motors(motor_keys{i});
@@ -204,7 +361,6 @@ methods (Access = public)
         end 
 
         if isinf(mincost)       
-            sol_structs = struct(); % empty 
             warning('No feasible solutions found');
         end 
 
@@ -220,10 +376,21 @@ methods (Access = public)
 
 
     function update_settings(obj, new_settings)
+    %   updates the settings for the problem. 
+    %
+    %   new_settings - a struct with (any) of the following fields:
+    %       solver - which solver to use, 'gurobi'(default, fastest) or 'ecos'
+    %       verbose - how much to print
+    %           verbose = 1 -- default
+    %           verbose = 2 -- use for debugging will output data on every solve
+    %           verbose = 0 -- supresses all outputs (except warnings)
+    %       print_freq - how often to update prints on screen (default 1)
+    %       line_freq - how often to print new line (default 500)
     %
     %
-    %
-    %
+        if isempty(new_settings)
+            return;
+        end 
         settings = obj.settings; % the current settings 
         % Loop through the fields
         fn = fieldnames(new_settings);
@@ -231,6 +398,31 @@ methods (Access = public)
             field = fn{ii};
             if ~isfield(settings, field)
                 error('update_settings: invalid field %s', field);
+            end 
+        end 
+        valid_solvers = {'gurobi', 'ecos'};
+        has_gurobi = ~isempty(which('gurobi.m'));
+        has_ecos = ~isempty(which('ecos.m'));
+        if ~any([has_gurobi, has_ecos])
+            error('validate_settings: no valid solvers found in path');
+        end 
+        if isfield(new_settings, 'solver')
+            settings.solver = new_settings.solver; 
+        end
+        if strcmpi(settings.solver, 'gurobi')
+            if ~has_gurobi
+                if has_ecos
+                    has_ecos; settings.solver = 'ecos'; 
+                end 
+                warning('Gurobi solver not found, using %s', settings.solver);                
+            end 
+        end 
+        if strcmpi(settings.solver, 'ecos')
+            if ~has_ecos
+                if has_gurobi
+                    settings.solver = 'gurobi'; 
+                end 
+                warning('ECOS solver not found, using %s', settings.solver);
             end 
         end 
         if isfield(new_settings, 'verbose')
@@ -242,37 +434,70 @@ methods (Access = public)
         if isfield(new_settings, 'line_freq')
             settings.line_freq = new_settings.line_freq; 
         end
-        valid_solvers = {'gurobi', 'ecos'};
-        has_gurobi = ~isempty(which('gurobi.m'));
-        has_ecos = ~isempty(which('ecos.m'));
-        if ~any([has_gurobi, has_ecos])
-            error('validate_settings: no valid solvers found in path');
-        end 
-        if isfield(new_settings, 'solver')
-            settings.solver = new_settings.solver; 
-        end
-        if strcmp(settings.solver, 'gurobi')
-            if ~has_gurobi
-                if has_ecos
-                    has_ecos; settings.solver = 'ecos'; 
-                end 
-                warning('Gurobi solver not found, using %s', settings.solver);                
-            end 
-        end 
-        if strcmp(settings.solver, 'ecos')
-            if ~has_ecos
-                if has_gurobi
-                    settings.solver = 'gurobi'; 
-                end 
-                warning('ECOS solver not found, using %s', settings.solver);
-            end 
-        end 
+       
+
     end 
 
 
-    function update_tolerances(obj, new_solve_settings)
 
-        nss = new_solve_settings; % just a shorter name  
+    function update_physics(obj, new_physics)
+    %   updates physics used in solving 
+    %
+    %   new_physics - a struct with (any) of the following fields:
+    %       inertia - true/false, do inertial compensation (default true)
+    %       f_damping - true/false, use viscous damping when specified in 
+    %                        motor.viscous_friction OR for any BLDC (default true)
+    %       f_couloumb - true/false, use coulomb friction when specified in 
+    %                       motor.coulomb_fricrion OR for any DC motor 
+    %       f_static - true/false use static friction bounds whenever omega = 0
+    %                   (default false). NOTE: turning static friction on can
+    %                   lead to numerical issues and is not physically accurate
+    %                   for many scenarios 
+    %
+        if isempty(new_physics)
+            return;
+        end 
+        np = new_physics;
+        ip = obj.physics; % initial physics 
+        if isfield(np, 'inertia'); ip.inertia = np.inertia; end
+        if isfield(np, 'f_damping'); ip.f_damping = np.f_damping; end 
+        if isfield(np, 'f_coulomb'); ip.f_coulomb = np.f_coulomb; end 
+        if isfield(np, 'f_static'); ip.f_static = np.f_static; end 
+        obj.physics = ip; 
+    end 
+
+    function update_filters(obj, new_filters)
+    %   updates selection filters for which motor/gearbox combinations to 
+    %   consider in optimization.
+    % 
+    %   See 'update filters' in MGDB for usage
+    %
+        obj.mg_database.update_filters(new_filters); % hashtag YES filter
+    end 
+
+
+    function update_tolerances(obj, new_tolerances)
+    %   updates numerical tolerances. For ADVANCED USERS ONLY. Tuning
+    %   may help if numerical issues aries in solving. 
+    %
+    %   new_tolerances - a struct with (any) of the following fields:
+    %       rho - multiplier for l1 regularizer on gamma/mu decomposition
+    %             default (1e-4)
+    %       gmmu_tol - tolerance on acceptable gamma/mu decompostion in Amps.
+    %              default 1e-3 (ie. 1 mA)
+    %       feastol - feasibility tolerance in SOCP solve (default 1e-5)
+    %       reltol - relative tolerance for accepting repeated solutions 
+    %               default 1e-2 (corresponding to 1% optimality)
+    %       abstol - absolute tolerance on solution (default 1e-3)
+    %       qcvx_reltol - relative tolerance for convergence of linear 
+    %                    fractional problems (default 1e-4)
+    %       qcvx_abstol - absolute toleranec for convergence of linear 
+    %                     fractional problems (default 1e-6)
+    %
+        if isempty(new_tolerances)
+            return;
+        end 
+        nss = new_tolerances; % jnew solve settings
         iss = obj.tolerances;  % initial  
         % TODO -- add validation on ranges 
         if isfield(nss, 'rho'); iss.rho = nss.rho; end 
@@ -286,109 +511,255 @@ methods (Access = public)
     end 
 
 
-    function update_physics(obj, new_physics)
-    %
-    %
-    %
-    %
-        np = new_physics;
-        ip = obj.physics; % initial physics 
-        if isfield(np, 'inertia'); ip.inertia = np.inertia; end
-        if isfield(np, 'f_damping'); ip.f_damping = np.f_damping; end 
-        if isfield(np, 'f_coulomb'); ip.f_coulomb = np.f_coulomb; end 
-        if isfield(np, 'f_static'); ip.f_static = np.f_static; end 
-        obj.physics = ip; 
-    end 
-
-    function update_filters(obj, new_filters)
-    %
-    %
-    %   Pass this straight to mgdb 
-    %
-    %   struct -- 
-    %
-        obj.mg_database.update_filters(new_filters); % hashtag YES filter
-    end 
-
-
 end % end public methods 
-
-%
-%
-%
-%
-%
-%
-%
-%
-%
-%
 
 
 
 methods (Access = private)
 
     function [problem_data, problem_type] = ...
-                                        validate_problem_data(obj, problem_data)
+                                        validate_problem_data(obj, input_data)
     %
     %
     %
     %
     %
 
-        % TODO add OPTIIONAL x_ub/x_lb as more efficient 
-        nd = 8; % number of decimals to keep on omega, omega_dot
+        [test_motor, test_gearbox] = test_motor_gearbox(); 
 
-        assert(isfield(problem_data, 'omega'), 'Missing omega');
-        assert(isfield(problem_data, 'Q'), 'Missing Q');
-        assert(isfield(problem_data, 'c'), 'Missing c');
-        assert(isfield(problem_data, 'M'), 'Missing M');
-        assert(isfield(problem_data, 'r'), 'Missing r');
-        assert(isfield(problem_data, 'beta'), 'Missing beta');
-        assert(isfield(problem_data, 'G'), 'Missing G');
-        assert(isfield(problem_data, 'h'), 'Missing h');
-        assert(isfield(problem_data, 'T'), 'Missing T');
-        assert(isfield(problem_data, 'd'), 'Missing d');
-        assert(isfield(problem_data, 'I_max'), 'Missing I_max');
-        assert(isfield(problem_data, 'V_max'), 'Missing V_max');
 
-        assert(isnumeric(problem_data.I_max) && problem_data.I_max > 0,...
+        % These need to be present no matter what 
+        assert(isfield(input_data, 'omega'), 'Missing omega');
+        assert(isfield(input_data, 'T'), 'Missing T');
+        assert(isfield(input_data, 'tau_c'), 'Missing tau_c');
+
+        assert(isfield(input_data, 'I_max'), 'Missing I_max');
+        assert(isfield(input_data, 'V_max'), 'Missing V_max');
+        assert(isnumeric(input_data.I_max) && input_data.I_max > 0,...
                                                      'I_max must be positive');
-        assert(isnumeric(problem_data.V_max) && problem_data.V_max > 0,...
+        assert(isnumeric(input_data.V_max) && input_data.V_max > 0,...
                                                      'V_max must be positive');
+
+        omega = input_data.omega(:);
+        T = input_data.T; 
+        tau_c = input_data.tau_c; 
+        I_max = input_data.I_max;
+        V_max = input_data.V_max; 
+        n = length(omega);  
+
+
+
+        if ~isa(T, 'function_handle');  T = @(motor, gearbox) T;      end 
+        if ~isa(tau_c, 'function_handle');  tau_c = @(motor, gearbox) tau_c(:);  end 
+        T_test = T(test_motor, test_gearbox);
+        w = size(T_test, 2); 
+        tau_c_test = tau_c(test_motor, test_gearbox); 
+        assert(size(T_test, 1) == n, 'Incorrect number of rows in T');
+        assert(numel(tau_c_test) == n || isempty(tau_c_test), 'Incorrect d length');
+
+
+
+        assert(isfield(input_data, 'Q'), 'Missing Q');
+        assert(isfield(input_data, 'c'), 'Missing c');
+        assert(isfield(input_data, 'M'), 'Missing M');
+        assert(isfield(input_data, 'r'), 'Missing r');
+        assert(isfield(input_data, 'beta'), 'Missing beta');
+
+        Q_empty = zeros(n, 1);  % the diagonal 
+        M_empty = sparse(w, w); 
+        c_empty = zeros(n, 1);    
+        r_empty = zeros(w, 1);   
+
+        Q = input_data.Q; 
+        c = input_data.c;
+        M = input_data.M; 
+        r = input_data.r; 
+        bet = input_data.beta; 
+
+        m = numel(Q); 
+
+
+        %
+        %
+        %         Validating inputs for linear fractional problems 
+        %
+        %
+        if (isfield(input_data, 'cost_ub') && ~isempty(input_data.cost_ub)) ||...
+           (isfield(input_data, 'cost_lb') && ~isempty(input_data.cost_lb)) ||...
+           (isfield(input_data, 'r_num') && ~isempty(input_data.r_num)) ||...
+           (isfield(input_data, 'r_den') && ~isempty(input_data.r_den))  || ...
+           (isfield(input_data, 'beta_num') && ~isempty(input_data.beta_num)) ||...
+           (isfield(input_data, 'beta_den') && ~isempty(input_data.beta_den)) 
+
+
+           % If it has any one of those field and no empty 
+           % need to ensure it has ALL of them 
+            assert(isfield(input_data, 'cost_ub') &&...
+                 ~isempty(input_data.cost_ub),...
+                 'Cost upper bound required for fractional problems'); 
+            assert(isfield(input_data, 'cost_lb') &&...
+                 ~isempty(input_data.cost_lb),...
+                 'Cost lower bound required for fractional problems'); 
+            assert(isfield(input_data, 'r_num') &&...
+                 ~isempty(input_data.r_den),...
+                 'Numerator vector required for fractional problems'); 
+            assert(isfield(input_data, 'r_den') &&...
+                 ~isempty(input_data.r_num),...
+                 'Denominator vector required for fractional problems'); 
+            assert(isfield(input_data, 'beta_num') &&...
+                 ~isempty(input_data.beta_num),...
+                 'Numerator offset required for fractional problems'); 
+            assert(isfield(input_data, 'beta_den') &&...
+                 ~isempty(input_data.beta_den),...
+                 'Denominator offset required for fractional problems'); 
+
+            assert(isnumeric(input_data.cost_ub), 'Costs must be numeric');
+            assert(isnumeric(input_data.cost_lb), 'Costs must be numeric');
+            assert(input_data.cost_ub - input_data.cost_lb > 0,...
+                    'Cost upper bound must be greater than lower bound'); 
+
+            % make col vec regardless of input 
+            input_data.r_num = input_data.r_num(:); 
+            input_data.r_den = input_data.r_den(:); 
+
+            % Size + Range Check on inputs 
+            assert(isscalar(input_data.cost_ub), 'Cost upper bound must be scalar');
+            assert(~isinf(input_data.cost_ub), 'Cost upper bound must be finite');
+            assert(isscalar(input_data.cost_lb), 'Cost lower bound must be scalar');
+            assert(~isinf(input_data.cost_lb), 'Cost lower bound must be finite');
+            assert(isscalar(input_data.beta_num), 'beta_num must be scalar');
+            assert(~isinf(input_data.beta_num), 'beta_num must be finite');
+            assert(isscalar(input_data.beta_den), 'beta_den must be scalar');
+            assert(~isinf(input_data.beta_den), 'beta_den must be finite');
+            assert(length(input_data.r_num) == w, 'r_num must be length %d', w);
+            assert(length(input_data.r_den) == w, 'r_den must be length %d', w);
+
+            % If linear fractional - cost terms must all be zero/empty 
+            error_txt = 'Cost inputs must be zero or empty for fractional problem';
+
+
+            assert(~isfield(input_data, 'Q0') || isempty(input_data.Q0),...
+                                                                     error_txt);
+            assert(~isfield(input_data, 'c0') || isempty(input_data.c0),...
+                                                                     error_txt);
+            assert(~isfield(input_data, 'M0') || isempty(input_data.M0),...
+                                                                     error_txt);
+            assert(~isfield(input_data, 'r0') || isempty(input_data.r0),...
+                                                                     error_txt);
+            assert(~isfield(input_data, 'beta0') || isempty(input_data.beta0),...
+                                                                     error_txt);
+            problem_type = 'fractional'; 
+
+
+            Q0 = @(~, ~) Q_empty;
+            c0 = c_empty;
+            M0 = @(~, ~) M_empty;
+            r0 = r_empty;
+            beta0 = 0;
+
+
+        else 
+            problem_type = 'standard'; 
+
+            assert(isfield(input_data, 'Q0'), 'Missing Q0');
+            assert(isfield(input_data, 'c0'), 'Missing c0');
+            assert(isfield(input_data, 'M0'), 'Missing M0');
+            assert(isfield(input_data, 'r0'), 'Missing r0');
+            assert(isfield(input_data, 'beta0'), 'Missing beta0');
+
+            Q0 = input_data.Q0;
+            c0 = input_data.c0; 
+            M0 = input_data.M0; 
+            r0 = input_data.r0;
+            beta0 = input_data.beta0; 
+
+                    %%
+            %
+            %        validate objective terms 
+            %
+            %
+            if ~isa(Q0, 'function_handle'); Q0 = @(~, ~) Q0; end 
+            if ~isa(M0, 'function_handle'); M0 = @(~, ~) M0; end 
+            Q0_test = Q0(test_motor, test_gearbox);
+            if isa(c0, 'function_handle')
+                c0_test = c0(test_motor, test_gearbox);
+            else 
+                c0_test = c0; 
+            end 
+            M0_test = M0(test_motor, test_gearbox);
+            if isa(r0, 'function_handle')
+                r0_test = r0(test_motor, test_gearbox);
+            else 
+                r0_test = r0; 
+            end 
+            if isa(beta0, 'function_handle')
+                beta0_test = beta0(test_motor, test_gearbox);
+            else 
+                beta0_test = beta0; 
+            end 
+            % TODO -- if not empty need to validate all
+            % a little cumbersome but writing 'validate functions' could make this section of code much more managable
+            % the validate function would return an appropriately sized empty term if emtpy and the other valudation
+            % as neccearyy -- then would need nearly as much repeated code 
+            if isempty(Q0_test)     
+                Q0 = @(~, ~) Q_empty; 
+            end % else validate 
+            if isempty(c0_test)
+                c0 = c_empty; 
+                c0_test = c_empty;
+            end 
+            if isempty(M0_test)
+                M0 = @(~, ~) M_empty;
+            end 
+            if isempty(r0_test)
+                r0 = r_empty;
+                r0_test = r_empty;
+            end 
+            if isempty(beta0)
+                beta0 = 0;
+            end
+
+            validate_c(c0_test, omega, n, 0);
+            validate_r(r0_test, w, 0);
+        end 
 
 
         % Get dummy motor and dummy gearbox for input validation 
-        [test_motor, test_gearbox] = test_motor_gearbox(); 
 
-        omega = problem_data.omega(:);
-        Q = problem_data.Q; 
-        c = problem_data.c;
-        M = problem_data.M; 
-        r = problem_data.r; 
-        bet = problem_data.beta; 
-        G = problem_data.G; 
-        h = problem_data.h; 
-        T = problem_data.T; 
-        d = problem_data.d; 
-        I_max = problem_data.I_max;
-        V_max = problem_data.V_max; 
 
-        % Optional Inputs G_ineq, h_ineq
-        % where G_ineq x + h_ineq = 0
-        G_ineq = []; 
-        h_ineq = [];
-        if isfield(problem_data, 'G_ineq') || isfield(problem_data, 'h_ineq') 
-            assert(isfield(problem_data, 'G_ineq'),...
-                     'Need to supply G_ineq AND h_ineq');
-            assert(isfield(problem_data, 'h_ineq'),...
-                     'Need to supply G_ineq AND h_ineq');
-            G_ineq = problem_data.G_ineq;
-            h_ineq = problem_data.h_ineq; 
+
+
+
+        % Optional Inputs G, h, G_ineq, h_ineq
+        % and Gx + h = 0
+        % where G_ineq x + h_ineq <=  0
+        G = [];
+        h = [];
+        if isfield(input_data, 'G') || isfield(input_data, 'h') 
+            assert(isfield(input_data, 'G'),...
+                                          'Need to supply G AND h');
+            assert(isfield(input_data, 'h'),...
+                                          'Need to supply G AND h');
+            G = input_data.G;
+            h = input_data.h; 
         end 
 
-        n = length(omega);  
-        m = numel(Q) - 1; 
+        G_ineq = [];    
+        h_ineq = [];
+        if isfield(input_data, 'G_ineq') || isfield(input_data, 'h_ineq') 
+            assert(isfield(input_data, 'G_ineq'),...
+                                          'Need to supply G_ineq AND h_ineq');
+            assert(isfield(input_data, 'h_ineq'),...
+                                          'Need to supply G_ineq AND h_ineq');
+            G_ineq = input_data.G_ineq;
+            h_ineq = input_data.h_ineq; 
+        end 
+
+        % Direct bounds on x-variable 
+        x_lb = -inf(w, 1);
+        if isfield(input_data, 'x_lb'); x_lb = input_data.x_lb; end 
+        x_ub = inf(w, 1); 
+        if isfield(input_data, 'x_ub'); x_ub = input_data.x_ub; end 
 
 
         % NOTE -- if its faster to have NO depedndeance on inpuits
@@ -402,32 +773,17 @@ methods (Access = private)
         if ~isa(h, 'function_handle');  h = @(motor, gearbox) h(:);   end 
         if ~isa(h_ineq, 'function_handle')
                         h_ineq = @(motor, gearbox) h_ineq(:);         end 
-        if ~isa(T, 'function_handle');  T = @(motor, gearbox) T;      end 
-        if ~isa(d, 'function_handle');  d = @(motor, gearbox) d(:);   end 
+        if ~isa(x_ub, 'function_handle');  x_ub = @(motor, gearbox) x_ub(:); end 
+        if ~isa(x_lb, 'function_handle');  x_lb = @(motor, gearbox) x_lb(:); end 
 
+        
 
-
-        % Same for the rest 
-        for j = 1:m + 1
-            % Check if input is function handle, if not make it so 
-            % NOTE: may want to change these too 
-            if ~isa(Q{j}, 'function_handle'); Q{j} = @(~, ~) Q{j}; end 
-            if ~isa(M{j}, 'function_handle'); M{j} = @(~, ~) M{j}; end 
-        end 
-
-
-        % Validate Remainin Inputs      
-        T_test = T(test_motor, test_gearbox);
-        w = size(T_test, 2); 
-        d_test = d(test_motor, test_gearbox); 
-        assert(size(T_test, 1) == n, 'Incorrect number of rows in T');
-        assert(numel(d_test) == n || isempty(d_test), 'Incorrect d length');
-
+        % Validate Remainin Inputs (G, h, G_ineq, h_ineq, x_lb, x_ub)
         G_test = G(test_motor, test_gearbox); 
         h_test = h(test_motor, test_gearbox); 
         assert(size(G_test, 2) == w || isempty(G_test),...
                                          'Incorrect number of columns in H');
-        assert(size(G_test, 1) == length(h_test), 'Size H and b incompatible')
+        assert(size(G_test, 1) == length(h_test), 'Size G and h incompatible')
         p = length(h_test); 
 
         G_ineq_test = G_ineq(test_motor, test_gearbox); 
@@ -436,13 +792,19 @@ methods (Access = private)
                             'Incorrect number of columns in G_ineq');
         assert(size(G_ineq_test, 1) == length(h_ineq_test),...
                          'Size G_ineq and h_ineq incompatible')
+        x_lb_test = x_lb(test_motor, test_gearbox);
+        x_ub_test = x_ub(test_motor, test_gearbox);
+        assert(length(x_lb_test) == w, 'Incorrect x lower bound size');
+        assert(length(x_ub_test) == w, 'Incorrect x upper bound size');
+        assert(all(x_ub_test >= x_lb_test), ['Upper bounds must be ',...
+                                        'greater than lower bounds']);
 
   
 
         %% Check for optional inputs -- Acceleration 
-
-        if isfield(problem_data, 'omega_dot')
-            omega_dot = problem_data.omega_dot(:); 
+        nd = 8; % number of decimals to keep on omega, omega_dot
+        if isfield(input_data, 'omega_dot') && (obj.physics.inertia)
+            omega_dot = input_data.omega_dot(:); 
             assert(length(omega_dot) == n,...
                     'omega and omega_dot must be same size'); 
             omega_dot = round(omega_dot, nd);
@@ -451,26 +813,42 @@ methods (Access = private)
         end 
 
 
+
+
+
+
+        % Same for the rest -- switch to other seperate objective/contraints 
+        %{
+        for j = 1:m + 1
+            % Check if input is function handle, if not make it so 
+            % NOTE: may want to change these too 
+            if ~isa(Q{j}, 'function_handle'); Q{j} = @(~, ~) Q{j}; end 
+            if ~isa(M{j}, 'function_handle'); M{j} = @(~, ~) M{j}; end 
+        end 
+        %} 
+        for j = 1:m  % TODO -- dont force to be function handle (like r and c)
+            % Check if input is function handle, if not make it so 
+            % NOTE: may want to change these too 
+            if ~isa(Q{j}, 'function_handle'); Q{j} = @(~, ~) Q{j}; end 
+            if ~isa(M{j}, 'function_handle'); M{j} = @(~, ~) M{j}; end 
+        end 
+
         % when f_j is encoding linear inequality -- its more  
         % efficient to explicitly encode these as linear constrainrts
         % intead of SOC constraints with empty matrices 
         % We will convert Q to vectors containing the diagonal 
-        Q_empty = zeros(n, 1);  % the diagonal 
-        M_empty = sparse(w, w); 
-        c_empty = zeros(n, 1);    
-        r_empty = zeros(w, 1);   
-        lin_ineq = zeros(m, 1);   % Indicator (1 = linear)
+
+
 
         % Letting c,r,beta be fixed instead of function handles can 
         % greatly speed up code 
-        for j = 1:m + 1
+        %for j = 1:m + 1   % NOTE: swticehd for seperate -- need to still validate objective though 
+        lin_ineq = zeros(m, 1);   % Indicator (1 = linear)
+        
+        for j = 1:m 
+
             Qj = Q{j}(test_motor, test_gearbox); % to test validity 
             Mj = M{j}(test_motor, test_gearbox); % to test validity 
-
-            if j == 1
-                Q0_test = Qj;  % used in veryfying fractional inputs 
-                M0_test = Mj;
-            end 
 
             if isa(c{j}, 'function_handle')
                 cj = c{j}(test_motor, test_gearbox);
@@ -499,16 +877,8 @@ methods (Access = private)
             assert(issymmetric(Mj), 'update_problem: M matrices must be symmetric');
             assert(size(Mj, 1) == w || isempty(Mj), 'size of T or M%d incorrect', j-1);
 
-            assert(size(rj, 1) == w, ['update_problem: r_%d incorrect length, ',...
-                            'expected %d, got %d'], j, w, size(rj, 1) );
-            assert(size(cj, 1) == n, ['update_problem: c_%d incorrect length, ',...
-                            'expected %d, got %d'], j, n, size(cj, 1) );
-            assert(size(rj, 2) == 1, 'update_problem: r_%d must be col vector', j-1);
-            assert(size(cj, 2) == 1, 'update_problem: c_%d must be col vector', j-1);
-
-            assert(min(cj.*omega) >= 0, ['update_problem: c_%d'' must ',...
-                                            'satisfy c .* omega >= 0'], j-1); 
-
+            validate_c(cj, omega, n, j)
+            validate_r(rj, w, j);
 
             % TODO -- size check on Q
             % NOTE: is there a cleaner code way to verify size 
@@ -533,115 +903,18 @@ methods (Access = private)
             assert(min(Qj) >= 0,...
                    'Diagonal entries of Q matrices must be non-negative');
 
-            if (nnz(Mj) == 0) && (j > 1)  % because using linear on Q
-                lin_ineq(j - 1) = 1; 
+            %if (nnz(Mj) == 0) && (j > 1)  % because using linear on Q   
+            if (nnz(Mj) == 0)  % because using linear on Q  -- because split up objective/constraints
+                %lin_ineq(j - 1) = 1; 
+                lin_ineq(j) = 1; 
             end
 
-            % TODO -- replace with simpler verion that skips eigen decomp 
             if nnz(Mj) > 0
-                [row, col, val] = find(Mj)
-                %unique_col = unique(col); 
-                unique_col = find(any(Mj));  % faster  
-
-                M_small = Mj(:, unique_col)
-                M_small = full(M_small(unique_col, :)); 
-                [V, D] = eig(M_small); 
-
-                num_neg_eig = sum([D < 0]); % May need to play with tolerancing 
-                if num_neg_eig == 1  % STANDARD SOC or ROTATED SOC 
-
-                    assert(nnz(rj) == w, 'Linear term must be empty for SOC constraints'); 
-
-                    % TODO -- what about constant term???? 
-                    % ...... if solving with gurobi dont need to do anything 
-                    % NOTE: should check that its still valid
-                    % one negative eig does not neccesarilt 
-                    % Diagonal of D in increasing order 
-                    % eigenvector corresponding to negative eigenvalue 
-                    v = D(:, 1); 
-                    v([abs(v) < 1e-12]) = 0; % tolerancing  
-                    
-                    if nnz(v) > 2 % Invalid eigen vector 
-                        error('update_problem:invalidInput',...
-                        'Error. The eigenvector associate with the',...
-                        'smallest eigenvalue of M_%d',...
-                        'must have at most 2  non-zeros',...
-                        'but has %d', j, nnz(v)); 
-                    end 
-                elseif num_neg_eig > 1  
-                    error('update_problem:invalidInput',...
-                        'Error. M_%d must have at most 1 negative',...
-                        'eigenvalue, has %d', j, num_neg_eig); 
-                end 
+                validate_soc(Mj); 
             end 
         end 
 
-        %
-        %
-        %         Validating inputs for linear fractional problems 
-        %
-        %
-        if (isfield(problem_data, 'cost_ub') && ~isempty(problem_data.cost_ub)) ||...
-           (isfield(problem_data, 'cost_lb') && ~isempty(problem_data.cost_lb)) ||...
-           (isfield(problem_data, 'r_num') && ~isempty(problem_data.r_num)) ||...
-           (isfield(problem_data, 'r_den') && ~isempty(problem_data.r_den))  || ...
-           (isfield(problem_data, 'beta_num') && ~isempty(problem_data.beta_num)) ||...
-           (isfield(problem_data, 'beta_den') && ~isempty(problem_data.beta_den)) 
-
-
-           % If it has any one of those field and no empty 
-           % need to ensure it has ALL of them 
-            assert(isfield(problem_data, 'cost_ub') &&...
-                 ~isempty(problem_data.cost_ub),...
-                 'Cost upper bound required for fractional problems'); 
-            assert(isfield(problem_data, 'cost_lb') &&...
-                 ~isempty(problem_data.cost_lb),...
-                 'Cost lower bound required for fractional problems'); 
-            assert(isfield(problem_data, 'r_num') &&...
-                 ~isempty(problem_data.r_den),...
-                 'Numerator vector required for fractional problems'); 
-            assert(isfield(problem_data, 'r_den') &&...
-                 ~isempty(problem_data.r_num),...
-                 'Denominator vector required for fractional problems'); 
-            assert(isfield(problem_data, 'beta_num') &&...
-                 ~isempty(problem_data.beta_num),...
-                 'Numerator offset required for fractional problems'); 
-            assert(isfield(problem_data, 'beta_den') &&...
-                 ~isempty(problem_data.beta_den),...
-                 'Denominator offset required for fractional problems'); 
-
-            assert(isnumeric(problem_data.cost_ub), 'Costs must be numeric');
-            assert(isnumeric(problem_data.cost_lb), 'Costs must be numeric');
-            assert(problem_data.cost_ub - problem_data.cost_lb > 0,...
-                    'Cost upper bound must be greater than lower bound'); 
-
-            % make col vec regardless of input 
-            problem_data.r_num = problem_data.r_num(:); 
-            problem_data.r_den = problem_data.r_den(:); 
-
-            % Size + Range Check on inputs 
-            assert(isscalar(problem_data.cost_ub), 'Cost upper bound must be scalar');
-            assert(~isinf(problem_data.cost_ub), 'Cost upper bound must be finite');
-            assert(isscalar(problem_data.cost_lb), 'Cost lower bound must be scalar');
-            assert(~isinf(problem_data.cost_lb), 'Cost lower bound must be finite');
-            assert(isscalar(problem_data.beta_num), 'beta_num must be scalar');
-            assert(~isinf(problem_data.beta_num), 'beta_num must be finite');
-            assert(isscalar(problem_data.beta_den), 'beta_den must be scalar');
-            assert(~isinf(problem_data.beta_den), 'beta_den must be finite');
-            assert(length(problem_data.r_num) == w, 'r_num must be length %d', w);
-            assert(length(problem_data.r_den) == w, 'r_den must be length %d', w);
-
-            % If linear fractional - cost terms must all be zero/empty 
-            error_txt = 'Cost inputs must be zero or empty for fractional problem';
-            assert(isempty(Q0_test) || nnz(Q0_test) == 0, error_txt);
-            assert(isempty(c{1}) || nnz(c{1}) == 0, error_txt);
-            assert(isempty(M0_test) || nnz(M0_test) == 0, error_txt);
-            assert(isempty(r{1}) || nnz(r{1}) == 0, error_txt);
-            assert(isempty(bet{1}) ||  bet{1} == 0, error_txt);
-            problem_type = 'fractional'; 
-        else 
-            problem_type = 'standard'; 
-        end 
+       
 
 
         %
@@ -649,23 +922,48 @@ methods (Access = private)
         %    Now all inputs validated  :) 
         %
         %
+        if strcmp(problem_type, 'fractional')
+            problem_data.cost_ub = input_data.cost_ub;
+            problem_data.cost_lb = input_data.cost_lb;
+            problem_data.r_num = input_data.r_num;
+            problem_data.r_den = input_data.r_den; 
+            problem_data.beta_num = input_data.beta_num;
+            problem_data.beta_den = input_data.beta_den; 
+        end 
+
+        problem_data.Q0 = Q0;
+        problem_data.r0 = r0;
+        problem_data.M0 = M0;
+        problem_data.c0 = c0; 
+        problem_data.beta0 = beta0; 
+
+        problem_data.T = T; 
+        problem_data.tau_c = tau_c; 
+        problem_data.omega = omega;
+        problem_data.omega_dot = omega_dot; 
+
         problem_data.Q = Q;   % etc 
         problem_data.c = c; 
         problem_data.M = M; 
         problem_data.r = r; 
         problem_data.beta = bet; 
+
+
         problem_data.G = G; 
         problem_data.G_ineq = G_ineq; 
         problem_data.h = h; 
         problem_data.h_ineq = h_ineq; 
-        problem_data.T = T; 
-        problem_data.d = d; 
-        problem_data.omega = omega;
-        problem_data.omega_dot = omega_dot; 
+        problem_data.x_lb = x_lb; 
+        problem_data.x_ub = x_ub; 
+
+
         problem_data.zero_vel_idxs = find(omega == 0); 
         problem_data.lin_ineq = lin_ineq; 
         problem_data.I_max = I_max; 
         problem_data.V_max = V_max;
+
+        % add problem_data.objective for parsing and assigning outputs???? 
+        % not a bad idea....
 
         % update relevant dimensions 
         problem_data.n = n;
@@ -673,14 +971,7 @@ methods (Access = private)
         problem_data.m = m;
         problem_data.p = p; 
 
-        if strcmp(problem_type, 'fractional')
-            problem_data.cost_ub = problem_data.cost_ub;
-            problem_data.cost_lb = problem_data.cost_lb;
-            problem_data.r_num = problem_data.r_num;
-            problem_data.r_den = problem_data.r_den; 
-            problem_data.beta_num = problem_data.beta_num;
-            problem_data.beta_den = problem_data.beta_den; 
-        end 
+
     end % end validate problem data 
 
     function [sol_structs, cost_list, mincost, exitflag] = ...
@@ -1149,7 +1440,7 @@ methods (Access = private)
          % probablyt keep A/b and rename the 'b' in the problem setup context 
 
         T = pd.T(motor, gearbox);
-        d = pd.d(motor, gearbox); 
+        tau_c = pd.tau_c(motor, gearbox); 
 
         tau_gearbox_inertia = gearbox.inertia * (ratio^2) * omega_dot;  % multiply ny ratio to add to output 
         
@@ -1271,7 +1562,7 @@ methods (Access = private)
 			ub(s_idxs) = max((I_l - I_comp).^2, (I_u - I_comp).^2) + bo; 
 
 			%
-            %   Rows 1:n        Tx + d = tau_out  (delivered to robot)
+            %   Rows 1:n        Tx + tau_c = tau_out  (delivered to robot)
             %   Rows n+1:2n     tau_out + tau_gb_inertia = motor/gb torque  
 			%
             % sign of motor/gb torque term determines driving/driven 		
@@ -1281,7 +1572,7 @@ methods (Access = private)
 
             A_eq_tau_x(1:n, tau_idxs) = eye(n);
             A_eq_tau_x(1:n, x_idxs) = -T; 
-            b_eq_tau_x(1:n) = d; 
+            b_eq_tau_x(1:n) = tau_c; 
 
             A_eq_tau_x(n + (1:n), tau_idxs) = -eye(n); 
             A_eq_tau_x(n + (1:n), gm_idxs) = ratio*eta*k_t*eye(n);
@@ -1433,7 +1724,7 @@ methods (Access = private)
             b_eq_tau_x = zeros(2*n, 1);
             A_eq_tau_x(1:n, tau_idxs) = eye(n);
             A_eq_tau_x(1:n, x_idxs) = -T; 
-            b_eq_tau_x(1:n) = d; 
+            b_eq_tau_x(1:n) = tau_c; 
 
             A_eq_tau_x(n + (1:n), tau_idxs) = -eye(n);
             A_eq_tau_x(n + (1:n), I_idxs) = ratio*k_t*eye(n);
@@ -1454,6 +1745,10 @@ methods (Access = private)
 
         lb(tau_idxs) = -gearbox.max_int_torque;
         ub(tau_idxs) = gearbox.max_int_torque; 
+
+        lb(x_idxs) = pd.x_lb(motor, gearbox);
+        ub(x_idxs) = pd.x_ub(motor, gearbox);
+
 
         %
         %
@@ -1523,22 +1818,33 @@ methods (Access = private)
         qc_idx = numel(quadcon);
 
         lin_ineq_idx = 0; % will increment 
+
+        Q = pd.Q; 
+        % conveninet but actually slower than writing loop 
+        %Q_tmp = cellfun(@(x) x(motor, gearbox), Q, 'UniformOutput', false); 
+
         for j = 1:m    % incorporate the quadratic constraints + other linear ineqs 
-            cj = pd.c{j + 1};  % +1 bc 1 indexing 
+            %cj = pd.c{j + 1};  % +1 bc 1 indexing 
+            cj = pd.c{j};  % +1 bc 1 indexing 
+
             if isa(cj, 'function_handle')
-                c_tmp = cj(motor, gearbox); 
+                c_tmp = cj(motor, gearbox); % slow 
             else 
                 c_tmp = cj;
             end 
 
-            rj = pd.r{j + 1};   % WHY SO SLOW ? - NOT EMPTY             
+            %rj = pd.r{j + 1};   % WHY SO SLOW ? - NOT EMPTY       
+            rj = pd.r{j};   % WHY SO SLOW ? - NOT EMPTY             
+
             if isa(rj, 'function_handle')
                 r_tmp = rj(motor, gearbox); % slow 
             else 
                 r_tmp = rj; 
             end 
             
-            bet = pd.beta{j + 1}; 
+            %bet = pd.beta{j + 1}; 
+            bet = pd.beta{j}; 
+
             if isa(bet, 'function_handle')
                 beta_tmp = bet(motor, gearbox); % slow 
             else 
@@ -1547,7 +1853,11 @@ methods (Access = private)
 
             q_tmp = zeros(dim_y, 1); 
             q_tmp(I_idxs) = c_tmp; 
-            q_tmp(Isq_idxs) =  pd.Q{j + 1}(motor, gearbox); 
+            %q_tmp(Isq_idxs) =  pd.Q{j + 1}(motor, gearbox); 
+            q_tmp(Isq_idxs) =  Q{j}(motor, gearbox);  % slow
+            %q_tmp(Isq_idxs) =  Q_tmp{j};  % slow
+
+
             q_tmp(x_idxs) = r_tmp; 
 
             if pd.lin_ineq(j)  % if linear 
@@ -1557,7 +1867,9 @@ methods (Access = private)
             else  % quad constraints 
                 qc_idx = qc_idx + 1; 
 
-                Mj_tmp = pd.M{j + 1}(motor, gearbox); 
+                %Mj_tmp = pd.M{j + 1}(motor, gearbox); 
+                Mj_tmp = pd.M{j}(motor, gearbox); 
+
 
                 num_vals = nnz(Mj_tmp); 
                 
@@ -1700,26 +2012,36 @@ methods (Access = private)
         end  
 
         %% ----- Incorporate Actual Cost --------------
-        [M0_row, M0_col, M0_val] = find(pd.M{1}(motor, gearbox)); 
+        %[M0_row, M0_col, M0_val] = find(pd.M{1}(motor, gearbox)); 
+        [M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
+
+
         Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
         									 M0_val, dim_y, dim_y); 
 
-        r0_tmp = pd.r{1};
+        %r0_tmp = pd.r{1};
+        r0_tmp = pd.r0; 
+
         if isa(r0_tmp, 'function_handle')
-            r0 = r0_tmp(motor, gearbox)
+            r0 = r0_tmp(motor, gearbox);
         else 
             r0 = r0_tmp;
         end 
         
-        beta0_tmp = pd.beta{1}; 
+        %beta0_tmp = pd.beta{1}; 
+        beta0_tmp = pd.beta0; 
+
         if isa(beta0_tmp, 'function_handle')
-            beta0 = beta0_tmp(motor, gearbox)
+            beta0 = beta0_tmp(motor, gearbox);
         else 
             beta0 = beta0_tmp;
         end 
         
-        Q0 = pd.Q{1}(motor, gearbox); % diag vector 
-        c0_tmp = pd.c{1};
+        %Q0 = pd.Q{1}(motor, gearbox); % diag vector 
+        %c0_tmp = pd.c{1};
+        Q0 = pd.Q0(motor, gearbox); % diag vector -- NOTE: should we do the function handle test here too? 
+        c0_tmp = pd.c0;
+
         if isa(c0_tmp, 'function_handle')
             c0 = c0_tmp(motor, gearbox)
         else 
@@ -2090,6 +2412,130 @@ methods (Access = private)
         end
          
     end 
+
+
+    function [tau_peak_min, tau_rms_min] = compute_torque_bounds(obj)
+    % compute_torque_bounds 
+    %
+    %   If T, and tau_c do not depend directly on the motor and gearbox, we can
+    %   sometimes establish lower bounds on the peak (abs) output torque and  
+    %   the rms torque. We can use these bounds to exclude some motor/gearbox
+    %   combinations from our search off the bat 
+        tau_peak_min = 0;  % the lower bound if cant presolve anything   
+        tau_rms_min = 0;      % the lower bound if cant presolve anything 
+
+        try % check if there is depedendance 
+            T = obj.problem_data.T([],[]);
+            tau_c = obj.problem_data.tau_c([], []); 
+        catch ME 
+            return; % if T and tau_c depend on motor/gearbox cant do anything 
+        end 
+
+        try % check if there is depedendance 
+            G = obj.problem_data.G([], []);
+            h = obj.problem_data.h([], []); 
+        catch ME % TODO -- add check on error type, otherwise rethrow
+            G = []; 
+            h = [];
+        end 
+
+        try % check if there is depedendance 
+            G_ineq = obj.problem_data.G_ineq([],[]);
+            h_ineq = obj.problem_data.h_ineq([],[]); 
+        catch ME % TODO - should add check on error type 
+            G_ineq = []; 
+            h_ineq = [];
+        end 
+
+        % If G,h, G_ineq, h_ineq also dont rely on motor/gearbox can use these
+        % constraints as well for a tighter problem 
+
+        %
+        %       Tx + tau_c = tau 
+        %     
+
+        % full optimization vector y = [x, tau, tau_peak_abs]
+        % formulate as Ax = b constraint
+        n = obj.problem_data.n; % number of time points
+        w = obj.problem_data.w; % dimensionality of x 
+        dim_y =  w + n + 1; 
+
+        % torque equality -- same equality constraints for both problems 
+        A_tau = zeros(n, dim_y); 
+        A_tau(:, 1:w) = T; 
+        A_tau(:, w + (1:n)) = -eye(n);
+        b_tau = -tau_c; 
+        lb = -inf(dim_y, 1);
+        ub = inf(dim_y, 1);
+
+        if ~isempty(G)
+            A_G = zeros(length(h), dim_y);
+            A_G(:, 1:w) = G; 
+            b_G = -h; 
+        else 
+            A_G = []; b_G = [];
+        end 
+        A_eq = [A_tau; A_G];
+        b_eq = [b_tau; b_G]; 
+
+        %% Solve the problem of maximizing peak absolute torque 
+        if ~isempty(G_ineq)
+            A_G_ineq = zeros(length(h_ineq), dim_y);
+            A_G_ineq(:, 1:w) = G_ineq; 
+            b_G_ineq = -h_ineq; 
+        else 
+            A_G_ineq = []; b_G_ineq = [];
+        end 
+
+        % Inequality  any +/-tau <=tau_peak_abs, 
+        A_ineq_tau = zeros(2*n, dim_y);
+        A_ineq_tau(1:n,  w + (1:n)) = eye(n);
+        A_ineq_tau(n + (1:n),  w + (1:n)) = -eye(n);
+        A_ineq_tau(:, w + n + 1) = -1; 
+        b_ineq_tau = zeros(2*n, 1); 
+
+        c_cost = zeros(dim_y, 1); 
+        c_cost(end) = 1; % mimimize peak (then know peak is at least this)
+
+        ps_matrices.c_cost = c_cost;  
+        ps_matrices.Q_cost = sparse(dim_y, dim_y); % empty 
+
+        ps_matrices.ub = ub;
+        ps_matrices.lb = lb;
+        ps_matrices.A_eq = A_eq;
+        ps_matrices.b_eq = b_eq; 
+        ps_matrices.A_ineq = [A_ineq_tau; A_G_ineq];
+        ps_matrices.b_ineq = [b_ineq_tau; b_G_ineq];
+        ps_matrices.beta0 = 0;
+        ps_matrices.quadcon = struct([]);
+
+
+        [tmp_sol1, tau_peak_min] = obj.socp_solve(ps_matrices, inf); 
+
+
+        %% Solve the problem of minimizing rms torque 
+        % -- will overwrite inequality constraints and add a quad constraint
+        % full optimization vector y = [x, tau, tau_rms]
+        % NOTE: may want option to turn this off if uneven time vector and this
+        % is not truly RMS -- todo 
+        ps_matrices.A_ineq = A_G_ineq;
+        ps_matrices.b_ineq = b_G_ineq; 
+
+        % add constraint (1/n^2) tau' * tau <= tau_rms^2  
+        quadcon = struct();
+        Qc = sparse([], [], [], dim_y, dim_y, n);
+        Qc(w + (1:n), w + (1:n)) = (1/n^2) * eye(n); 
+        quadcon.Qc = Qc; 
+        qc = zeros(dim_y, 1); 
+        qc(end) = -1;
+        quadcon.q = qc;
+        quadcon.rhs = 0; 
+        quadcon.sense = '<'; 
+        ps_matrices.quadcon = quadcon; 
+
+        [tmp_sol2, tau_rms_sq_min] = obj.socp_solve(ps_matrices, inf); 
+        tau_rms_min = sqrt(tau_rms_sq_min); 
+    end 
     
 
     function [tau_motor_friction, tau_static_friction] = ...
@@ -2110,9 +2556,12 @@ methods (Access = private)
                 tau_static_friction = motor.coulomb_friction;
                 coulomb_friction = sign_omega*motor.coulomb_friction;
             else 
-                keyboard
-                %tau_static_friction = 
-                %coulomb_friction = 
+                if isnan(motor.I_nl)
+                    I_nl = (motor.V - motor.k_t*motor.omega_nl)/motor.R; 
+                else 
+                    I_nl = motor.I_nl;
+                end 
+                coulomb_friction = sign_omega*motor.k_t*I_nl;
             end 
 
             if isnan(motor.viscous_friction)
@@ -2174,7 +2623,6 @@ methods (Access = private)
         model = [];
         Q_cost = matrices.Q_cost;
         c_cost = matrices.c_cost;
-        c_rho_aug = matrices.c_rho_aug;
         beta0 = matrices.beta0;
         A_eq = matrices.A_eq;
         b_eq = matrices.b_eq;
@@ -2232,12 +2680,60 @@ end % end private methods
 %==============================================================================
 end % end CLASSDEF
 
+%
+%       Input validation functions 
+%
+%{
+function Q = validate_Q()
+end 
+
+function M = validate_M()
+end 
+
+function M0 = validate_M0()
+end 
+%} 
+
+function dirs = find_dirs(tofind)
+% copied verbatim from https://www.mathworks.com/matlabcentral/answers/347892-get-full-path-of-directory-that-is-on-matlab-search-path
+% shoutout to Walter Robinson
+    esctofind = regexptranslate('escape', tofind);   %in case it has special characters
+    dirs = regexp(path, pathsep,'split');          %cell of all individual paths
+    temp = unique(cellfun(@(P) strjoin(P(1:find(strcmp(esctofind, P),1,...
+                'last')),filesep), regexp(dirs,filesep,'split'), 'uniform', 0));    
+    dirs = temp(~cellfun(@isempty,temp));     %non-empty results only
+    % remove any .git paths, complicates things submodules 
+    dirs = dirs(~cellfun(@(x)contains(x, '.git'), dirs)); 
+end 
+
+
+function validate_c(cj, omega, input_size, input_num)
+    j = input_num;
+    n = input_size; 
+    assert(size(cj, 1) == n, ['update_problem: c_%d incorrect length, ',...
+                    'expected %d, got %d'], j, n, size(cj, 1) );
+    assert(size(cj, 2) == 1, 'update_problem: c_%d must be col vector', j-1);
+
+    assert(min(cj.*omega) >= 0, ['update_problem: c_%d'' must ',...
+                                    'satisfy c .* omega >= 0'], j-1); 
+end 
+
+function validate_r(rj, input_size, input_num)
+    j = input_num;
+    w = input_size;
+    assert(size(rj, 2) == 1, 'update_problem: r_%d must be col vector', j-1);
+    assert(size(rj, 1) == w, ['update_problem: r_%d incorrect length, ',...
+                            'expected %d, got %d'], j, w, size(rj, 1) );
+end
+
+           
+
 
 %%%% Non Class Methods 
 function validate_dependencies()
 % Make sure we have everything we need installed 
     if isempty(which('mgdb.m'))
-        error('mdbm.m (Motor-Gearbox DataBase) not found');
+        error('mgdb.m (Motor-Gearbox DataBase) not found');
     end 
     if isempty(which('gurobi.m')) && isempty(which('ecos.m'))
         error('no valid solvers installed (Gurobi or ECOS)');
@@ -2245,7 +2741,51 @@ function validate_dependencies()
 end 
 
 
+function is_valid = valid_objective(objective)
 
+    is_valid = false; % TODO 
+end 
+
+function validate_soc(Mj)
+    % TODO -- simplify 
+    [row, col, val] = find(Mj)
+    %unique_col = unique(col); 
+    unique_col = find(any(Mj));  % faster  
+
+    M_small = Mj(:, unique_col)
+    M_small = full(M_small(unique_col, :)); 
+    [V, D] = eig(M_small); 
+
+    % TODO -- can remove this eigen decmop code -- see prep_socp
+
+
+    num_neg_eig = sum([D < 0]); % May need to play with tolerancing 
+    if num_neg_eig == 1  % STANDARD SOC or ROTATED SOC 
+
+        assert(nnz(rj) == w, 'Linear term must be empty for SOC constraints'); 
+
+        % TODO -- what about constant term???? 
+        % ...... if solving with gurobi dont need to do anything 
+        % NOTE: should check that its still valid
+        % one negative eig does not neccesarilt 
+        % Diagonal of D in increasing order 
+        % eigenvector corresponding to negative eigenvalue 
+        v = D(:, 1); 
+        v([abs(v) < 1e-12]) = 0; % tolerancing  
+        
+        if nnz(v) > 2 % Invalid eigen vector 
+            error('update_problem:invalidInput',...
+            'Error. The eigenvector associate with the',...
+            'smallest eigenvalue of M_%d',...
+            'must have at most 2  non-zeros',...
+            'but has %d', j, nnz(v)); 
+        end 
+    elseif num_neg_eig > 1  
+        error('update_problem:invalidInput',...
+            'Error. M_%d must have at most 1 negative',...
+            'eigenvalue, has %d', j, num_neg_eig); 
+    end 
+end 
 
 function def_settings = default_settings()
     def_settings = struct('solver', 'gurobi',...
@@ -2265,10 +2805,13 @@ function def_tolerances = default_tolerances()
 end 
 
 function def_physics = default_phyics()
+    %
+    %  TODO -- exaplain all these and defaults 
+    %
     def_physics = struct('inertia', true,...
                             'f_damping', true,...
                             'f_coulomb', true,...
-                            'f_static', false);
+                            'f_static', false); 
 end 
 
 function [test_motor, test_gearbox] = test_motor_gearbox()
