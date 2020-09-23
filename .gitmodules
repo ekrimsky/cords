@@ -1,0 +1,3 @@
+[submodule "MGDB"]
+	path = MGDB
+	url = https://github.com/ekrimsk/MGDB
