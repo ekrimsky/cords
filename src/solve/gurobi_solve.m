@@ -1,10 +1,10 @@
 function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq,...
-                                    b_ineq, quadcon, lb, ub, cutoff, settings)
+                        b_ineq, quadcon, lb, ub, cutoff, settings, varargin)
 %
 %
-%
-%
-%
+%   If varargin is empty, solve standard MIQCQP 
+%   If varargin is not empty, first optional argument 
+%   is a lsit of indices in the optimzatino vector which must be binary 
 %
 
     %% Gurobi Model 
@@ -12,6 +12,10 @@ function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq,...
     sense = [repmat('=', length(b_eq), 1); repmat('<', length(b_ineq), 1)]; 
     A_all = sparse([A_eq; A_ineq]); 
     b_all = [b_eq; b_ineq]; 
+
+
+
+
 
 
     dim_y = length(lb); 
@@ -26,7 +30,17 @@ function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq,...
     model.ub = ub; 
 
     model.quadcon = quadcon;
+    vtype = repmat('C', dim_y, 1); 
+
     model.vtype = repmat('C', dim_y, 1); % all continuous variables 
+
+
+    if ~isempty(varargin) && ~isempty(varargin{1})
+        bin_idxs = varargin{1}; 
+        vtype(bin_idxs) = 'B'; % binary 
+    end 
+    model.vtype = vtype;        % continuous ('C') or binary ('B')
+
     model.modelsense = 'min'; % minimize or maximize 
 
 
