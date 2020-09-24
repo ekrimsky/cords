@@ -1,15 +1,15 @@
 # Convex Optimal Robot Drive Selection (CORDS)
 
-CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over motor and gearbox combinations specified in a [motor/gearbox data base folder](https://github.com/ekrimsk/MGDB/). 
+CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over tens of thousands motor and gearbox combinations specified in a [motor/gearbox data base folder](https://github.com/ekrimsk/MGDB/). 
 
-CORDS requires the user to specify a trajectory of robot joint velocities <img src="/tex/ae4fb5973f393577570881fc24fc2054.svg?invert_in_darkmode&sanitize=true" align=middle width=10.82192594999999pt height=14.15524440000002pt/> and to parametrize the desired joint torques through an optimization problem. For simple cases where both the joint trajectory and the joint torques are known, check out the CORDS web interface (A LINK). 
+CORDS requires the user to specify a trajectory of robot joint velocities <img src="/tex/ae4fb5973f393577570881fc24fc2054.svg?invert_in_darkmode&sanitize=true" align=middle width=10.82192594999999pt height=14.15524440000002pt/> and to parametrize the desired joint torques through an optimization problem. For simple cases where both the joint trajectory *and the joint torques* are known, check out the CORDS web interface (A LINK - keenon make this website plz). 
 
 
 ## What can CORDS solve?  
 
-CORDS can solve any motor/gearbox selection that can be cast as the problem type below. This can include optimizing much more than motors/gearboxes such as battery mass, parallel springs, or robot size. We reccomend that users utilize the code provided in [examples](examples) to get started using CORDS. These example problems include:
- * [optimizing parallel elasticity for minimal power consumption](examples/example1.m)
- * [optimizing battery mass to maximize run time for a quadruped robot](examples/example2.m)
+CORDS can solve any motor/gearbox selection problem that can be cast as the problem type below. This can include optimizing other robot features such as battery mass or parallel springs in conjunction with choosing the optimal motor and gearbox. We reccomend that users utilize the code provided in [examples](examples) to get started using CORDS. These example problems include:
+ * [optimizing parallel elasticity for minimal power consumption](examples/parallel_elastic.m)
+ * [optimizing battery mass to maximize run time for a quadruped robot](examples/quadruped.m)
  * [optimizing exoskeleton design parameters]
 
 Specifically CORDS solves 
@@ -17,7 +17,7 @@ Specifically CORDS solves
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
 
-with motor currents <img src="/tex/cd427d5ecb99fcabde5a7fffa6103a1f.svg?invert_in_darkmode&sanitize=true" align=middle width=50.911134449999984pt height=22.55708729999998pt/> and auxiliary varaibles <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the inputs satsify: 
+with motor currents <img src="/tex/cd427d5ecb99fcabde5a7fffa6103a1f.svg?invert_in_darkmode&sanitize=true" align=middle width=50.911134449999984pt height=22.55708729999998pt/> and auxiliary variables <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the problem inputs satsify: 
 * <img src="/tex/bad8cbb55822df2eb7bbf59df6190e30.svg?invert_in_darkmode&sanitize=true" align=middle width=80.71703969999999pt height=26.17730939999998pt/>, diagonal PSD matrix for <img src="/tex/52c03ebb6ac0c8e7f1261d96409b7cbc.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/>
 * <img src="/tex/1e47cf05617b340cea169d5c16925949.svg?invert_in_darkmode&sanitize=true" align=middle width=87.50376194999998pt height=26.17730939999998pt/>, symmetric PSD
 * <img src="/tex/6f41c62b5c2794bfa9a2bef8f734c971.svg?invert_in_darkmode&sanitize=true" align=middle width=87.05570445pt height=26.17730939999998pt/>, for <img src="/tex/54f5851e55c7944fd243ff3e83828b82.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/> symmetric PSD or encodes SOC constraint (see cords.update_problem)
@@ -31,7 +31,7 @@ We provide interfaces to simplify using CORDS for common optimization objectives
 * [minimum power consumption](/src/interfaces/min_power_consumption.m)
 * [minimum mass](/src/interfaces/min_mass.m)
 * [minimum effective inertia](/src/interfaces/min_effective_inertia.m)
-* [minimum peak torque](/src/interfaces/min_peak_torque.m)
+
 
 
 ## A Simple Example - Minimizing Joule Heating 
@@ -40,11 +40,12 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
 >> data = struct();        % empty struct with no fields that we will fill in 
 >> data.omega = omega;
->> data.omega_dot = omega; 
+>> data.omega_dot = omega_dot; 
 >> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
->> data.c0 = [];
+>> data.c0 = [];        % all other cost terms can be left empty
 >> data.M0 = [];
 >> data.r0 = [];
+>> data.beta0 = []; 
 >> data.I_max = 80;     % set 80 Amp current limit
 >> data.V_max = 24;     % set 24 Volt voltage limit 
 >> data.tau_c = tau_des;
@@ -66,22 +67,21 @@ We now pass this data to the CORDS optimizer
 
 
 ## Requirements
-* Matlab 20something or later, ill figure it out 
+* Matlab 2017b or later but I dont really know, delaey does it work?
 * [Gurobi 8.0 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
+
 Gurobi offers better performance than the ECOS solver but is only free for academic use. 
-* A database (explain)
 
 ## Installation
 
-clone or download   TODO ( test on another laptop) 
-add to matlab path  TODO 
+Install CORDS by cloning the repository to your Matlab directory
 ```
-git clone something 
+git clone https://github.com/ekrimsk/CORDS.git
 ```
-add the files
-```
-something something
-```
+or download the zip. 
+
+CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/cords))`. To add CORDS to the Matlab search path on startup, you can add `addpath path_to_cords/cors` to you `startup.m` file.
+
 ## Documentation 
 
 Detailed documentation for CORDS can be acessed by typing
@@ -97,7 +97,7 @@ at the Matlab command prompt.
 
 
 
-Using CORDS in your research? Cite our not yet extant paper: 
+Using CORDS in your research? Cite our not yet extant paper if it ever gets written and published: 
 ```
 
 formated bib.tex
