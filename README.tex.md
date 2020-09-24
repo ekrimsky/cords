@@ -97,7 +97,7 @@ git clone --recurse-submodules https://github.com/ekrimsk/CORDS.git
 ```
 where adding `--recurse-submodules` will clone the motor/gearbox database as well. 
 
-CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/cords))`. To add CORDS to the Matlab search path on startup, your can add `addpath path_to_cords/cors` to you `startup.m` file. OR 
+CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/CORDS))`. Running `savepath` will then add CORDS to your default Matlab path. On linux systems you may need to add `addpath path_to_cords/CORDS` to you `startup.m` file. OR 
 
 ## Documentation 
 
