@@ -558,7 +558,7 @@ for motor = 1:N_motors % loop through motors
         
         %Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
         Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; 
-        c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j;  % TODO -- k_e 
+        c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j;  
         M{end + 1, 1} = []; 
         r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
         bet{end + 1, 1} = 0; 
@@ -566,7 +566,7 @@ for motor = 1:N_motors % loop through motors
         % If negative MOTOR power consumption
         %Q{end + 1, 1} = @(motor, ~) Phi*motor.R * spdg_j; 
         Q{end + 1, 1} = @(motor, ~) Phi*motor.R * e_j; 
-        c{end + 1, 1} = @(motor, gearbox) Phi*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j;     % TODO-- k_e 
+        c{end + 1, 1} = @(motor, gearbox) Phi*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j; 
         M{end + 1, 1} = []; 
         r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
         bet{end + 1, 1} = 0; 
@@ -575,15 +575,6 @@ for motor = 1:N_motors % loop through motors
 end 
 
 
-
-
-
-
-%-----------------------------------------
-%
-%       Voltage and Current Limits 
-%
-%----------------------------------------
 
 
 
@@ -740,17 +731,6 @@ settings.solver = 'gurobi';
 prob = cords('settings', settings); % instantiate new motor selection problem 
 
 prob.update_problem(problem_data);   % update with the data 
-
-%{
-prob.filter_motors 
-prob.filter_gears 
-
-% consider whats the best way to do this 
-prob.hints = % HOW BEST TO DO THIS? 
-%} 
-
-% Need to think about what return types should be 
-% What inputs would make sense????? 
 num_solutions = 2; % number of best combinations to return 
 sol_struct = prob.optimize(num_solutions);
 
