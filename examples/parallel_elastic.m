@@ -7,13 +7,14 @@
 %
 %
 %
-%
+% See also example1_simple
 clearvars; clc; close all; 
 % Another idea for the website 
 % ... have pictures and jupiter notebook type 
 % deal where we walk through each of the examples 
 
 % Get Trajectory Data 
+addpath('examples/example_data');
 
 
 %....fill in  
@@ -23,7 +24,7 @@ clearvars; clc; close all;
 % Fill in with rando stuff -- TODO - load in from file 
 
 % TODO -- package up so can refenerence correctly 
-load('example1_input_data.mat', 'time',  'theta', 'omega',...
+load('parallel_elastic_input_data.mat', 'time',  'theta', 'omega',...
                                 'omega_dot', 'tau_des'); 
 theta = theta(:); % col vec
 omega = omega(:);
@@ -31,6 +32,8 @@ omega_dot = omega_dot(:);
 time = time(:); 
 tau_des = tau_des(:); 
 n = length(time); 
+
+omega(omega == 0) = -1e-12;  % to help debug something 
 
 %disp('fix velocities ')
 %omega = abs(omega) + 0.1; 
@@ -44,33 +47,34 @@ n = length(time);
 
 w = 2 + n; % dimensionality of x vector
 kp_idx = 1; 
-tau_c_idx = 2; 
+tau_offset_idx = 2; 
 t_idxs = 3:(3 + n - 1); 
 
 % Block comment at the begining of each of these would be good 
 
 
 % Initialize Cell Arrays 
-Q = {}; 
-c = {};   % ...etc 
-M = {};
-r = {}; 
-bet = {};
 
 
-% Fill in Objective 
-Q{1, 1} = []; 
-c{1, 1} = []; 
-M{1, 1} = [];
+
+% Fill in Objective --- slpit out ibjective 
+Q0 = []; 
+c0 = []; 
+M0 = [];
 
 r0 = zeros(w, 1);
 r0(t_idxs(1):t_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
 r0(t_idxs(2):t_idxs(end)) = r0(t_idxs(2):t_idxs(end)) + 0.5*ones(n - 1, 1).*diff(time);
-r{1, 1} = r0; 
-bet{1, 1} = 0;
+beta0 = 0; 
 
 
 % Define efficiencies psi, 
+
+Q = {}; 
+c = {};  
+M = {};
+r = {}; 
+bet = {};
 
 Phi = 0.95; % driver board efficienc 
 Phi_inv = 1/Phi; 
@@ -81,83 +85,83 @@ for j = 1:n
     % If positive power conumption 
     e_j = zeros(n, 1); 
     e_j(j) = 1; % one hot vector / unit basis vector 
-
+    e_js = sparse(e_j);
     % NOTE  -- would it be more efficient to divide through by R so no Q dependednce on inputs? Still r and c dependence though 
 
     % Q can either take in a sparse diagonal matrix OR 
     % a non-sparse vector specifying the diagoan
+
+    r_tmp = [0; 0; -e_j];
+
     Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; % vector type input 
-    c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.alpha*omega(j)*e_j;  % TODO -- k_e 
+    c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.ratio*omega(j)*e_j; % TODO -- should need to account for direction 
+    
     M{end + 1, 1} = []; 
-    r{end + 1, 1} = [0; 0; -e_j];  % accounting for the other vars 
+    r{end + 1, 1} = r_tmp;  % accounting for the other vars 
     bet{end + 1, 1} = 0; 
 
     % If negative power consumption
-    spdg_j =  sparse(diag(e_j)); 
 
-    Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; % sparse matrix type input 
-    c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.alpha*omega(j)*e_j;     % TODO-- k_e 
+
+    %Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; % sparse matrix type input
+    Q{end + 1, 1} = @(motor, ~) Psi*motor.R * e_j; % sparse matrix type input 
+    c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.ratio*omega(j)*e_j;     
     M{end + 1, 1} = []; 
-    r{end + 1, 1} = [0; 0; -e_j];  % accounting for the other vars 
+    r{end + 1, 1} = r_tmp;  % accounting for the other vars 
     bet{end + 1, 1} = 0; 
 end 
 
-% Fill in Equality Constraints 
-% THERE ARE NOT ANY FOR THIS PROBLEM 
-H = []; 
-b = [];
 
-%
-H_ineq = zeros(4, w); % Limit t_c and k_par 
-H_ineq(1, kp_idx) = 1; 
-H_ineq(2, kp_idx) = -1; 
-H_ineq(3, tau_c_idx) = 1; 
-H_ineq(4, tau_c_idx) = -1; 
-b_ineq = [-20; -20; -20; -20]; 
+%% Add bounds on the spring properties (will make solving easier )
+x_lb = -inf(w, 1);
+x_ub = inf(w, 1); 
+x_lb([kp_idx, tau_offset_idx]) = [-20; -20];
+x_ub([kp_idx, tau_offset_idx]) = [20, 20]; 
 
 
 
 % Fill in Torque Constraints 
-% inertial compensation 
-% accounting for par el
 T = @(~, ~) [theta,  ones(n,1), zeros(n, w - 2)]; 
-d = @(~, ~) tau_des;   % inertial compensation done in optimizer 
+tau_c = tau_des;   % inertial compensation done in optimizer 
 
 V_max = 48; % volts  
 I_max = 100;  % Amps 
-%I_max = 4; 
 
-% Fill in Bound Constraints 
-% account for voltage and current limits 
-I_u = @(motor, gearbox) min(I_max,...
-         (1/motor.R)*min(abs(V_max + motor.k_e*gearbox.alpha.*omega),...
-               abs(V_max + motor.k_e*gearbox.alpha.*omega) ) ); 
 
-% Assign all to the same struct 
+
+
+%% Fill in trajectory and desired torque data 
+problem_data.T = T;
+problem_data.tau_c = tau_c; 
+problem_data.omega = omega;
+problem_data.omega_dot = omega_dot; 
+
+problem_data.I_max = I_max; 
+problem_data.V_max = V_max; 
+
+% Fill in Objective
+problem_data.Q0 = Q0;
+problem_data.M0 = M0;
+problem_data.c0 = c0;
+problem_data.r0 = r0;
+problem_data.beta0 = beta0;
+
+%% Fill in other constraints 
 problem_data.Q = Q;
 problem_data.c = c; 
 problem_data.M = M; 
 problem_data.r = r; 
 problem_data.beta = bet; 
-problem_data.H = H;    % maybe A instead 
-problem_data.b = b;
-
-%problem_data.H_ineq = H_ineq;
-%problem_data.b_ineq = b_ineq; 
-
-problem_data.T = T;
-problem_data.d = d;
-problem_data.omega = omega;
-problem_data.omega_dot = omega_dot; 
-problem_data.I_u = I_u; 
+problem_data.x_lb = x_lb;
+problem_data.x_ub = x_ub; 
 
 
 
 % Solve the problem 
 
+%settings.solver = 'ecos';   % if we wanted to use ecos 
 settings.solver = 'gurobi';
-prob = MotorSelection(settings); % instantiate new motor selection problem 
-
+prob = cords('settings', settings, 'reuse_db', false); % instantiate new motor selection problem 
 prob.update_problem(problem_data);   % update with the data 
 
 %{
@@ -165,22 +169,24 @@ prob.filter_motors
 prob.filter_gears 
 
 % consider whats the best way to do this 
-prob.hints = % HOW BEST TO DO THIS? 
+prob.hints = % HOW BEST TO DO THIS? -- TODO 
 %} 
 
 % Need to think about what return types should be 
 % What inputs would make sense????? 
-
-sol_struct = prob.optimize(10);
+num_solutions = 100;
+sol_struct = prob.optimize(num_solutions);
 
 sol = sol_struct(1).sol; 
 
 
 % Extract Results 
 kp = sol.x(kp_idx)
-tau_c = sol.x(tau_c_idx);
-theta_0 = tau_c/kp; 
+tau_offset = sol.x(tau_offset_idx);
+theta_0 = tau_offset/kp; 
 
+
+%save(fullfile('examples', 'parallel_elastic_results.mat')); 
 
 %energy = 
 
@@ -190,7 +196,7 @@ theta_0 = tau_c/kp;
 % even though it could be calculated externally 
 
 
-% Plot results 
+% Plot results - animate would be nice rtoo 
 
 % show break up of torque 
 
