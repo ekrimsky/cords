@@ -8,7 +8,6 @@ function [sol_struct] = min_power_consumption(prob, input_data, num_solutions, w
 %
 % See also CORDS, MGDB, MIN_MASS, MIN_EFFECTIVE_INERTIA, MIN_PEAK_TORQUE
 
-    sol_struct = struct([]); % we might not get a solution below 
 
     omega = input_data.omega; 
     w_add = length(omega); % adding 1 element to opt vector for every time 
@@ -76,11 +75,11 @@ function [sol_struct] = min_power_consumption(prob, input_data, num_solutions, w
     input_data.beta = bet;  % scalar, does not need to be resized 
 
     prob.update_problem(input_data);
+
     sol_struct = prob.optimize(num_solutions);
 
 
     % Loop through outputs and add power information 
-
     for jj = 1:numel(sol_struct)
         sol = sol_struct(jj).sol;
         x = sol.x(1:w_init);
