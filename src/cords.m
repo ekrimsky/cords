@@ -163,7 +163,6 @@ methods (Access = public)
         end 
 
         if no_database % no database file -- create new one and save it 
-            keyboard
             mg_database = mgdb(db_file_path);
             db_file = fullfile(pwd, 'mg_database.mat');
             save(db_file, 'mg_database');
@@ -175,6 +174,7 @@ methods (Access = public)
         mg_settings.verbose = obj.settings.verbose; % link verbosity
         obj.mg_database.update_settings(mg_settings); 
         obj.filters = obj.mg_database.get_filters(); % start with the defaults 
+        obj.problem_type = []; % none yet 
     end %end constructor 
 
     
@@ -310,8 +310,9 @@ methods (Access = public)
     %                   among others
     %           'motor' - the motors
     %           'gearbox' - the gearboxes
-        sol_structs = struct(); % empty 
-        if ~isfield(obj, 'problem_type')
+        sol_structs = struct([]); % empty 
+
+        if isempty(obj.problem_type)
             warning('Cannot optimize before adding problem data');
             return;
         end
@@ -557,24 +558,36 @@ methods (Access = private)
         assert(size(T_test, 1) == n, 'Incorrect number of rows in T');
         assert(numel(tau_c_test) == n || isempty(tau_c_test), 'Incorrect d length');
 
+        if isfield(input_data, 'Q') || isfield(input_data, 'c') || ...
+            isfield(input_data, 'M') || isfield(input_data, 'r') || ...
+            isfield(input_data, 'b')
 
+            % if specified any of these, need to specify all of them 
+            assert(isfield(input_data, 'Q'), 'Missing Q');
+            assert(isfield(input_data, 'c'), 'Missing c');
+            assert(isfield(input_data, 'M'), 'Missing M');
+            assert(isfield(input_data, 'r'), 'Missing r');
+            assert(isfield(input_data, 'beta'), 'Missing beta');
 
-        assert(isfield(input_data, 'Q'), 'Missing Q');
-        assert(isfield(input_data, 'c'), 'Missing c');
-        assert(isfield(input_data, 'M'), 'Missing M');
-        assert(isfield(input_data, 'r'), 'Missing r');
-        assert(isfield(input_data, 'beta'), 'Missing beta');
+            Q = input_data.Q; 
+            c = input_data.c;
+            M = input_data.M; 
+            r = input_data.r; 
+            bet = input_data.beta; 
+        else 
+            Q = {};
+            c = {};
+            M = {};
+            r = {};
+            bet = {};
+        end 
 
         Q_empty = zeros(n, 1);  % the diagonal 
         M_empty = sparse(w, w); 
         c_empty = zeros(n, 1);    
         r_empty = zeros(w, 1);   
 
-        Q = input_data.Q; 
-        c = input_data.c;
-        M = input_data.M; 
-        r = input_data.r; 
-        bet = input_data.beta; 
+
 
         m = numel(Q); 
 
@@ -1362,6 +1375,8 @@ methods (Access = private)
                                      index_map, comp_torques,  motor, gearbox); 
         exitflag = 0; % no issues with solve 
 
+
+
         % If mu/gamma decomposition inccorect at some indices, try to fix it 
         if ~isempty(bad_idxs)  % need to run next solve 
             init_cost = combo_cost; 
@@ -1372,7 +1387,8 @@ methods (Access = private)
             exitflag = 1; 
             
             if ~isempty(bad_idxs_clean) || isnan(y_sol(1))
-                error('need to add mixed integer backup')
+                obj.mixed_int_solve(matrices, index_map.del, cutoff);
+                exitflag = 2; 
             end
 
         end 
@@ -2116,12 +2132,15 @@ methods (Access = private)
 
         % If Actual solution exists....
         k_t = motor.k_t; 
-        ratio = gearbox.direction .* gearbox.ratio; 
+        ratio = gearbox.direction .* gearbox.ratio;  % NOTE: accounts for dir
         eta = gearbox.efficiency; 
+
+        omega_motor = omega*ratio; 
 
         I_comp = comp_torques.I_comp; 
 
-        sol.I = y_sol(index_map.I); 
+        sol.I = y_sol(index_map.I);
+        sol.V = sol.I*motor.R + motor.k_t*omega_motor; % Voltage  
         sol.x = y_sol(index_map.x); 
         sol.I_comp = I_comp; 
 
@@ -2161,8 +2180,9 @@ methods (Access = private)
         tau_comp = sol.tau + tau_gearbox_inertia;  % tau delivered to + torque eateb up by gb inetita 
        
         % in this context, strictly greater 
-        driving = [tau_comp .* sign(omega) > 0];  % note OR equals 
-        driven = [tau_comp .* sign(omega) < 0];
+        % TODO double check with rever direction gearboxes
+        driving = [tau_comp .* sign(gearbox.direction * omega) > 0];  % note OR equals 
+        driven = [tau_comp .* sign(gearbox.direction * omega) < 0];
 
         
         % TODO -- rename zero vel things to make it more clear its torque 
@@ -2346,10 +2366,8 @@ methods (Access = private)
                     % fixed in the above process 
                     % this indicates a tolerancing error 
                     disp('tolerancing error on tau')
-                    keyboard
                 else 
                     disp('aaaa ---------------------- ')
-                    keyboard
                 end 
             end 
 
@@ -2358,7 +2376,6 @@ methods (Access = private)
 
             % case or recusrion limtis 
             disp('fiixxxxxxx')
-            keyboard
             [new_sol, new_cost, result] = obj.socp_solve(clean_matrices, inf);
 
             
@@ -2613,8 +2630,7 @@ methods (Access = private)
     end 
 
 
-    function [y_sol, combo_cost, result, model] = ...
-                                              socp_solve(obj, matrices, cutoff)
+    function [y_sol, combo_cost, result] = socp_solve(obj, matrices, cutoff)
     %
     %
     %   TODO -- this all needs cleaning -- might want to add a seperate 
@@ -2645,6 +2661,50 @@ methods (Access = private)
                 [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp,...
                             G_soc, h_soc, G_rsoc, h_rsoc, obj.tolerances);
             end
+        else
+            error('invalid solver'); % shouldnt be possible 
+        end 
+
+                    % ...maybe copy outside if for reuse? 
+        if ~isinf(result.objval)
+            y_sol = result.x; 
+            combo_cost = result.objval; 
+        else
+            y_sol = nan(length(lb), 1); 
+            combo_cost = inf;  
+        end 
+
+    end % socp_solve
+
+    function [y_sol, combo_cost, result] = ...
+                                mixed_int_solve(obj, matrices, bin_idxs, cutoff)
+    %
+    %
+    %   TODO -- this all needs cleaning -- might want to add a seperate 
+    %   'gurobi solve' file for consistency
+    %
+        model = [];
+        Q_cost = matrices.Q_cost;
+        c_cost = matrices.c_cost;
+        beta0 = matrices.beta0;
+        A_eq = matrices.A_eq;
+        b_eq = matrices.b_eq;
+        A_ineq = matrices.A_ineq; 
+        b_ineq = matrices.b_ineq; 
+        lb = matrices.lb; 
+        ub = matrices.ub; 
+        quadcon = matrices.quadcon;
+        dim_y = length(lb);
+
+
+
+
+        if strcmpi(obj.settings.solver, 'gurobi') 
+            result = gurobi_solve(Q_cost, c_cost, beta0, A_eq, b_eq,...
+                                             A_ineq, b_ineq, quadcon, lb, ub,...
+                                        cutoff, obj.tolerances, bin_idxs);
+        elseif strcmpi(obj.settings.solver, 'ecos') 
+            error('erez still needs to write the branch and bound module')
         else
             error('invalid solver'); % shouldnt be possible 
         end 
