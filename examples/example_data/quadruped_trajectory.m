@@ -163,14 +163,14 @@ omega_dot_lhk_gait = central_diff(omega_lhk_gait, t_gait);
 % 
 %        Jump trajectory 
 %
-%        Accelerate upward at 3g for 0.03 seconds from crouched position 
+%        Accelerate upward at 4g for 0.03 seconds from crouched position 
 %        Assume start with com at 0.15 m 
 
 t_jump = (0:0.01:0.03)';   % just a few time points 
 
 N_jump = length(t_jump); 
 z_com_jump_init = 0.15; 
-z_com_ddot_jump = 3*g*ones(N_jump, 1); 
+z_com_ddot_jump = 4*g*ones(N_jump, 1); 
 z_com_dot_jump = cumtrapz(t_jump, z_com_ddot_jump);
 z_com_jump = z_com_jump_init + cumtrapz(t_jump, z_com_dot_jump);
 
@@ -290,7 +290,7 @@ del_LH_x = LH_x - (x_com - 0.5*l_body*cos(theta_com));
 
 
 %% Save out to mat file 
-save('example2_input_data.mat',...
+save('quadruped_input_data.mat',...
          't_gait', ...
          't_jump',...
          'l_body',... 	% robot length (front to back shouler)

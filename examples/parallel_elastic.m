@@ -48,7 +48,7 @@ omega(omega == 0) = -1e-12;  % to help debug something
 w = 2 + n; % dimensionality of x vector
 kp_idx = 1; 
 tau_offset_idx = 2; 
-t_idxs = 3:(3 + n - 1); 
+pwr_idxs = 3:(3 + n - 1);  % indices corresponding to power consumed at each time step
 
 % Block comment at the begining of each of these would be good 
 
@@ -63,8 +63,8 @@ c0 = [];
 M0 = [];
 
 r0 = zeros(w, 1);
-r0(t_idxs(1):t_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
-r0(t_idxs(2):t_idxs(end)) = r0(t_idxs(2):t_idxs(end)) + 0.5*ones(n - 1, 1).*diff(time);
+r0(pwr_idxs(1):pwr_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
+r0(pwr_idxs(2):pwr_idxs(end)) = r0(pwr_idxs(2):pwr_idxs(end)) + 0.5*ones(n - 1, 1).*diff(time);
 beta0 = 0; 
 
 
@@ -76,11 +76,61 @@ M = {};
 r = {}; 
 bet = {};
 
-Phi = 0.95; % driver board efficienc 
+
+
+
+%
+%   TODO -- make this cleaner 
+%       
+%   Power consumption is given by P = IV where I = current, V = Voltage
+%
+%   From KVL for the motor loop we can relate the motor speed to the
+%   current and voltage by 
+%
+%   V = IR + k_t*omega_motor     (where k_t, the torque constant is the same as the 
+%   the back-emf constant in SI Units )
+%
+%   omega_motor = gearbox.direction*gearbox.ratio*omega_joint, omega_joint
+%   is the velocity we are telling to the solver 
+%
+%   So, idally we could write our power consumption as 
+%       I(IR + k_t*omega_motor)= I^2 R + I * k_t*omega_motor
+%
+%   When we are drawing positive electrical power from the battery, we have 
+%   efficiecy losses in the driver boards where 0 < Phi <= 1 is the driver
+%   board efficiency, so we would state the actual power draw as:
+%       (1/Phi) * I^2 R + I*k_t*omega_motor
+%
+%   When we are using the motor as a generator and sending current back
+%   to the battery we have additional losses associated with charging 
+%   the battery (this depends both on the cicuitry and battery type)
+%
+%   In this case the (negative) power draw is:
+%         Psi* I^2 R + I*k_t*omega_motor where Psi the regeneration 
+%   efficiency (0 <= Psi < 1). We could set Psi to zero for resistive braking
+%
+%   We can combine these equations to say that the power draw, P 
+%   is given by:
+%       P = max{(1/Phi) (I^2 R + I*k_t*omega_motor), Psi*(I^2 R + k_t*omega_motor)}
+%   This can be encoded in differentiable form by introducing a new varialbe, P,
+%   for the power draw at each time step and adding the inwequalities 
+%
+%       P >= (1/Phi) (I^2 R + I*k_t*omega_motor)
+%               AND
+%       P >=  Psi*(I^2 R + k_t*omega_motor)
+%
+%   Now to get the total power consumed over the trajectory we perform
+%   trapezoidal integration the P variables 
+%   
+%
+
+
+
+Phi = 0.99; % driver board efficienc 
 Phi_inv = 1/Phi; 
 Psi = 0.8; % regen efficincy psi 
 % Fill in general inequality constraints 
-for j = 1:n
+for j = 1:n  % Loop through the time indices 
 
     % If positive power conumption 
     e_j = zeros(n, 1); 
@@ -91,10 +141,10 @@ for j = 1:n
     % Q can either take in a sparse diagonal matrix OR 
     % a non-sparse vector specifying the diagoan
 
-    r_tmp = [0; 0; -e_j];
+    r_tmp = [0; 0; -e_j];  % This picks out the specific power consumption value at this time step
 
     Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; % vector type input 
-    c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.ratio*omega(j)*e_j; % TODO -- should need to account for direction 
+    c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j; % TODO -- should need to account for direction 
     
     M{end + 1, 1} = []; 
     r{end + 1, 1} = r_tmp;  % accounting for the other vars 
@@ -105,7 +155,7 @@ for j = 1:n
 
     %Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; % sparse matrix type input
     Q{end + 1, 1} = @(motor, ~) Psi*motor.R * e_j; % sparse matrix type input 
-    c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.ratio*omega(j)*e_j;     
+    c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j;     
     M{end + 1, 1} = []; 
     r{end + 1, 1} = r_tmp;  % accounting for the other vars 
     bet{end + 1, 1} = 0; 
