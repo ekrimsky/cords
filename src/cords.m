@@ -341,7 +341,7 @@ methods (Access = public)
         tmp_filters.tau_rms = max(tmp_filters.tau_rms, tau_rms_min);
         obj.mg_database.update_filters(tmp_filters);
         [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
-        obj.mg_database.update_filter(tmp_filters);  % revert back to original 
+        obj.mg_database.update_filters(tmp_filters);  % revert back to original 
 
         % Convert from database map keys to structs 
         for i = 1:length(motor_keys)  % slightly faster than cell fun
@@ -402,7 +402,6 @@ methods (Access = public)
                 error('update_settings: invalid field %s', field);
             end 
         end 
-        valid_solvers = {'gurobi', 'ecos'};
         has_gurobi = ~isempty(which('gurobi.m'));
         has_ecos = ~isempty(which('ecos.m'));
         if ~any([has_gurobi, has_ecos])
