@@ -1,6 +1,6 @@
 function [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
                                      prep_socp(Q, obj, objcon, A_eq, b_eq,...
-                                    A_ineq, b_ineq, quadcon, lb, ub,  cutoff)
+                            A_ineq, b_ineq, quadcon, lb, ub,  cutoff, solver)
 %*******************************************************************************
 %   Function:
 %        
@@ -180,26 +180,13 @@ for j = 1:num_quadcon
             Q_short = Qj(unique_cols, :);  % cut empty rows 
             Q_small = full(Q_short(:, unique_cols)); 
 
-           
+            num_rows = length(unique_cols) + 2; 
 
-            %W = sparse([], [], [], length(unique_cols), dim_y, nnz(Q_small)); 
-
-            %% Cholesky decomposition has a lot of overhead and we frequently
-            % single quadratic terms (1 x 1 matrice) so check for that explicitly
-            % so we will check if its diagonl in which case do elementwise sqrt
-           
-            
-            %W(:, unique_cols) = fast_chol(Q_small);
-
-            % TODO should reference ECOS paper or some other documentation 
-            % relalted to some code in ECOSQP 
-            % See note: 6/3/20 
-            % NOTE: can speed up a lot of ths spart indexing in this block 
-            G = sparse([], [], [], length(unique_cols) + 2, dim_y,...
+            G = sparse([], [], [], num_rows, dim_y,...
                              nnz(Q_small) + 2*numel(qc_half)); 
             G(1, :) = qc_half;
             G(2:end-1, unique_cols) = -fast_chol(Q_small); % expensive 
-            G(end, :) = -qc_half; 
+            G(num_rows, :) = -qc_half; 
 
             h  = [1/sqrt(2);  zeros(size(Q_small,1),1); 1/sqrt(2)]; 
             %G = [c_half', -1/sqrt(2);
@@ -208,7 +195,11 @@ for j = 1:num_quadcon
             %h  = [1/sqrt(2);  zeros(size(W,1),1); 1/sqrt(2)]; 
             G_soc{end + 1} = G;
             h_soc{end + 1} = h;
+
+
+
         case 2 % Standard SOC  
+
             c_tmp = zeros(1, dim_y); 
             c_tmp(neg_col) = sqrt(-neg_val); 
 
@@ -228,34 +219,47 @@ for j = 1:num_quadcon
             h = zeros(num_rows, 1);
             G_soc{end + 1} = G;
             h_soc{end + 1} = h;
+            warning('this code has not been test')
         case 3 % rotated SOC 
             exclude_cols = [neg_col, neg_row];
 
-            c_tmp1 = zeros(1, dim_y); 
-            c_tmp1(exclude_cols) = sqrt(-2*neg_val) * [-1, -1]; 
-            c_tmp2 = zeros(1, dim_y); 
-            c_tmp2(exclude_cols) = sqrt(-2*neg_val) * [1, -1];
-
-
-            %psd_cols = setdiff(unique_cols, exclude_cols);   % cols in original
+            
             psd_cols = fsd(unique_cols, exclude_cols);   % cols in original
             Q_short = Qj(psd_cols, :);  % cut empty rows 
             Q_small = full(Q_short(:, psd_cols)); 
             Qhalf_psd = fast_chol(Q_small); 
+            num_rows =  length(psd_cols) + 2; 
 
-            num_rows =  length(psd_cols) + 2;     
-
-            %W = sparse([], [], [], length(psd_cols), dim_y, nnz(Qhalf_psd));
-            %W(:, psd_cols) = Qhalf_psd; 
-
-            G = sparse([], [], [], length(psd_cols) + 2, dim_y,...
-                             nnz(Qhalf_psd) + 2*nnz(c_tmp1)); 
-            G(1, :) = c_tmp1;
-            G(2:(length(psd_cols)+ 1), psd_cols) = -2*Qhalf_psd;
-            G(length(psd_cols) + 2, :) = c_tmp2;
-
-
+            c_tmp1 = zeros(1, dim_y); 
+            c_tmp2 = zeros(1, dim_y); 
             h = zeros(num_rows, 1);
+
+            if strcmp(solver, 'ecos')
+                c_tmp1(exclude_cols) = sqrt(-2*neg_val) * [-1, -1]; 
+                c_tmp2(exclude_cols) = sqrt(-2*neg_val) * [1, -1];
+
+                G = sparse([], [], [], length(psd_cols) + 2, dim_y,...
+                                 nnz(Qhalf_psd) + 4); 
+                G(1, :) = c_tmp1;
+                G(2:(length(psd_cols)+ 1), psd_cols) = -2*Qhalf_psd;
+                G(num_rows, :) = c_tmp2;
+               
+            elseif strcmp(solver, 'sedumi')
+
+                %c_tmp1(neg_col) = 2*neg_val * (1/sqrt(2));
+                %c_tmp2(neg_row) = 2*neg_val * (1/sqrt(2));
+                c_tmp1(neg_col) = 2*neg_val * 1/sqrt(2);
+                c_tmp2(neg_row) = 2*neg_val * 1/sqrt(2);
+
+                G = sparse([], [], [], length(psd_cols) + 2, dim_y,...
+                                 nnz(Qhalf_psd) + 2); 
+                G(1, :) = c_tmp1;
+                G(2, :) = c_tmp2; 
+                G(3:num_rows, psd_cols) = -Qhalf_psd;
+
+            else 
+                error('invalid solver');
+            end 
             G_rsoc{end + 1} = G;
             h_rsoc{end + 1} = h;
         otherwise
