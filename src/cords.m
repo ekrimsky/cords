@@ -340,8 +340,8 @@ methods (Access = public)
         tmp_filters.tau_max = max(tmp_filters.tau_max, tau_peak_min);
         tmp_filters.tau_rms = max(tmp_filters.tau_rms, tau_rms_min);
         obj.mg_database.update_filters(tmp_filters);
-
         [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
+        obj.mg_database.update_filter(tmp_filters);  % revert back to original 
 
         % Convert from database map keys to structs 
         for i = 1:length(motor_keys)  % slightly faster than cell fun
