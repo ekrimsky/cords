@@ -71,7 +71,7 @@ $$
 
 letting the optimation vector $x$ encode the parallel stiffness $k_p$ we can rewrite the last line above as:
 ```
->> data.T = [-theta];      % include coupling of motor torque and spring torque
+>> data.T = [-theta(:)];      % include coupling of motor torque and spring torque
 ```
 We now pass this data to the CORDS optimizer
 ```
