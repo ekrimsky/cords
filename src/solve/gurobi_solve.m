@@ -13,11 +13,6 @@ function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq,...
     A_all = sparse([A_eq; A_ineq]); 
     b_all = [b_eq; b_ineq]; 
 
-
-
-
-
-
     dim_y = length(lb); 
 
     model.Q = Q; 
@@ -29,9 +24,12 @@ function [result, model] = gurobi_solve(Q, obj, objcon, A_eq, b_eq, A_ineq,...
     model.lb = lb; 
     model.ub = ub; 
 
-    model.quadcon = quadcon;
+    % otherwise throws errors on gurobi 8.1 
+    if ~isempty(quadcon) && (numel(fieldnames(quadcon)) > 1)
+        model.quadcon = quadcon;
+    end 
+ 
     vtype = repmat('C', dim_y, 1); 
-
     model.vtype = repmat('C', dim_y, 1); % all continuous variables 
 
 
