@@ -607,12 +607,13 @@ end
 
 % minimize gait_cycle_energy/battery_energy (1/num_steps)
 
-
-% If (energy per gait)/(battery energy) = 0, can walk forever
-%   --> So cost lower bound as 0 
-% If (energy per gait)/(battery energy) = 1, can only walk 1 gait cycle 
-%   --> So set 1 as upper bound 
-
+%
+%
+%   One way to think about this is to minimize gait_cycle_energy/battery_enrgy
+%   because then then the bounds would be 0 for inifinite run time and 1 
+%   for runtime of 1 step. However, objectives very close to zero could 
+%   lead to numerical issues 
+%{
 r_num = zeros(dim_x, 1); 
 r_num(e_gc_idx) = 1; 
 beta_num = 0;
@@ -623,16 +624,16 @@ beta_den = 0;
 
 cost_lb = 0;
 cost_ub = 1; 
-
+%} 
 
 % OR 
 % minmize negative number of steps 
 % minimize -battery_energy/gait_cycle_energy
 %
 %  upper bound -1 (1 step)
-%  2 steps per second, -- 
-%{
-week_of_steps = 2*60*60*24*7;
+%  lower bound assume the robot can walk for a whole week 
+steps_per_sec = 1/t_gait(end);
+week_of_steps = steps_per_sec*60*60*24*7;
 
 r_num = zeros(dim_x, 1); 
 r_num(m_b_idx) = -rho_batt; 
@@ -643,13 +644,8 @@ r_den(e_gc_idx) = 1;
 beta_den = 0; 
 
 
-cost_lb = -1e5; 
-cost_ub = -1e3; 
-
-%} 
-
-
-
+cost_lb = -week_of_steps; 
+cost_ub = -1; 
 
 
 
