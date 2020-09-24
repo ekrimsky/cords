@@ -11,8 +11,10 @@ CORDS can solve any motor/gearbox selection problem that can be cast as the prob
  * [optimizing parallel elasticity for minimal power consumption](examples/parallel_elastic.m)
  * [optimizing battery mass to maximize run time for a quadruped robot](examples/quadruped.m)
  * [optimizing exoskeleton design parameters]
+ 
+ Examples should be run from the root CORDS directory. 
 
-Specifically CORDS solves 
+CORDS solves 
 <p align="center"><img src="/tex/8e524d848db90a42ba21abfbb9832cfe.svg?invert_in_darkmode&sanitize=true" align=middle width=336.2595522pt height=78.28491164999998pt/></p> 
  with optional contraints 
  <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
@@ -76,11 +78,11 @@ Gurobi offers better performance than the ECOS solver but is only free for acade
 
 Install CORDS by cloning the repository to your Matlab directory
 ```
-git clone https://github.com/ekrimsk/CORDS.git
+git clone --recurse-submodules https://github.com/ekrimsk/CORDS.git
 ```
-or download the zip. 
+where adding `--recurse-submodules` will clone the motor/gearbox database as well. 
 
-CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/cords))`. To add CORDS to the Matlab search path on startup, you can add `addpath path_to_cords/cors` to you `startup.m` file.
+CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/cords))`. To add CORDS to the Matlab search path on startup, your can add `addpath path_to_cords/cors` to you `startup.m` file. OR 
 
 ## Documentation 
 
