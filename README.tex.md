@@ -10,7 +10,7 @@ CORDS requires the user to specify a trajectory of robot joint velocities $\omeg
 CORDS can solve any motor/gearbox selection problem that can be cast as the problem type below. This can include optimizing other robot features such as battery mass or parallel springs in conjunction with choosing the optimal motor and gearbox. We reccomend that users utilize the code provided in [examples](examples) to get started using CORDS. These example problems include:
  * [optimizing parallel elasticity for minimal power consumption](examples/parallel_elastic.m)
  * [optimizing battery mass to maximize run time for a quadruped robot](examples/quadruped.m)
- * [optimizing exoskeleton design parameters]
+ * [optimizing exoskeleton design parameters](https://www.youtube.com/watch?v=dQw4w9WgXcQ&ab_channel=RickAstleyVEVO)
  
  Examples should be run from the root CORDS directory. 
 
@@ -85,7 +85,7 @@ We now pass this data to the CORDS optimizer
 
 ## Requirements
 * Matlab 2017b or later but I dont really know, delaey does it work?
-* [Gurobi 8.0 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
+* [Gurobi 8.1 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
 
 Gurobi offers better performance than the ECOS solver but is only free for academic use. 
 
