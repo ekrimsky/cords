@@ -56,7 +56,7 @@ Adding a parallel elastic element with stiffness <img src="/tex/b19efe18c84e5887
 
 letting the optimation vector <img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/> encode the parallel stiffness <img src="/tex/b19efe18c84e5887c52c1c0fd15160eb.svg?invert_in_darkmode&sanitize=true" align=middle width=15.33435419999999pt height=22.831056599999986pt/> we can rewrite the last line above as:
 ```
->> data.T = [-theta];      % include coupling of motor torque and spring torque
+>> data.T = [-theta(:)];      % include coupling of motor torque and spring torque
 ```
 We now pass this data to the CORDS optimizer
 ```
