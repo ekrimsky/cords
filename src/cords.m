@@ -173,6 +173,7 @@ methods (Access = public)
         obj.mg_database = mg_database; 
         mg_settings.verbose = obj.settings.verbose; % link verbosity
         obj.mg_database.update_settings(mg_settings); 
+        obj.mg_database.clear_filters(); % dont want to load in non-deault filters
         obj.filters = obj.mg_database.get_filters(); % start with the defaults 
         obj.problem_type = []; % none yet 
     end %end constructor 
@@ -555,8 +556,14 @@ methods (Access = private)
         T_test = T(test_motor, test_gearbox);
         w = size(T_test, 2); 
         tau_c_test = tau_c(test_motor, test_gearbox); 
+
+        if isempty(T_test)
+            T_test = double.empty(n, 0);
+            T = @(~, ~) T_test; % for more general compatibility 
+        end
         assert(size(T_test, 1) == n, 'Incorrect number of rows in T');
-        assert(numel(tau_c_test) == n || isempty(tau_c_test), 'Incorrect d length');
+        assert(numel(tau_c_test) == n || isempty(tau_c_test),...
+                                                     'Incorrect tau_c length');
 
         if isfield(input_data, 'Q') || isfield(input_data, 'c') || ...
             isfield(input_data, 'M') || isfield(input_data, 'r') || ...
@@ -1007,7 +1014,7 @@ methods (Access = private)
         obj.vprintf(1, table_line);
 
         header_r1 = [" Combo x  |",  " Repeated |", " Mixed Int |",...
-                          "     |",  "   |", "     "];
+                          " Dual    |",  "   |", "     "];
         combo_frac_txt = sprintf(' of %d |', num_combinations);
         header_r2 = [combo_frac_txt, "  Solves |", " Solves |",...
                           "  Cutoff  |", "Best Cost |", "   Time  "];
@@ -1501,11 +1508,13 @@ methods (Access = private)
         % potenial condition this on the physics too 
         if nzvi > 0 
             sf_idxs = tau_idxs(end) + (1:nzvi);      % for static friction (sf)
-            x_idxs = sf_idxs(end) + (1:w); 
         else 
-            sf_idxs = []; 
-            x_idxs = tau_idxs(end) + (1:w);
+            sf_idxs = [];
         end 
+            
+        x_idxs = tau_idxs(end) + nzvi + (1:w); % may be empty if no T 
+
+        init_end_idx = tau_idxs(end) + nzvi + w; 
 
         index_map.I = I_idxs; 
         index_map.Isq = Isq_idxs; 
@@ -1516,7 +1525,7 @@ methods (Access = private)
         Ico = I_comp.*omega;        
         binary_aug = false; 
         if eta < 1
-        	gm_idxs = x_idxs(end) + (1:n);
+        	gm_idxs = init_end_idx + (1:n);
             mu_idxs = gm_idxs(end) + (1:n); 
             s_idxs = mu_idxs(end) + (1:n);  
 
@@ -1731,7 +1740,8 @@ methods (Access = private)
                 b_ineq_other = [];
             end 
         else  % NO GEARBOX (Direct Drive) -- explicitly encode because faster
-            dim_y = x_idxs(end); 
+            dim_y = init_end_idx; % because x may be empty 
+
             lb = -inf(dim_y, 1);		
         	ub = inf(dim_y, 1);
 
@@ -2028,12 +2038,14 @@ methods (Access = private)
         end  
 
         %% ----- Incorporate Actual Cost --------------
-        %[M0_row, M0_col, M0_val] = find(pd.M{1}(motor, gearbox)); 
-        [M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
 
-
-        Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
+        if ~isempty(x_idxs)   % meaning fixed torque 
+            [M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
+            Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
         									 M0_val, dim_y, dim_y); 
+        else 
+            Q_cost = sparse(dim_y, dim_y); 
+        end  
 
         %r0_tmp = pd.r{1};
         r0_tmp = pd.r0; 
