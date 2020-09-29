@@ -264,8 +264,6 @@ methods (Access = public)
     %       x_ub      - (w x 1) vector of upper bounds on x (can be inf)
     %       G         - (? x w) equality constraint matrix on x 
     %       h         - (? x 1) vector for equality constraints on x 
-    %       G_ineq    - (? x w) inequality constraint matrix on x 
-    %       h_ineq    - (? x 1) vector for inequality constraints on x
     %       
     %
     %
@@ -564,39 +562,62 @@ methods (Access = private)
         assert(numel(tau_c_test) == n || isempty(tau_c_test),...
                                                      'Incorrect tau_c length');
 
-        if isfield(input_data, 'Q') || isfield(input_data, 'c') || ...
-            isfield(input_data, 'M') || isfield(input_data, 'r') || ...
-            isfield(input_data, 'b')
+        %if isfield(input_data, 'Q') || isfield(input_data, 'c') || ...
+        %    isfield(input_data, 'M') || isfield(input_data, 'r') || ...
+        %    isfield(input_data, 'b')
+        if isfield(input_data, 'P') || isfield(input_data, 'C') || ...
+            isfield(input_data, 'F') || isfield(input_data, 'beta')
 
             % if specified any of these, need to specify all of them 
-            assert(isfield(input_data, 'Q'), 'Missing Q');
-            assert(isfield(input_data, 'c'), 'Missing c');
-            assert(isfield(input_data, 'M'), 'Missing M');
-            assert(isfield(input_data, 'r'), 'Missing r');
+            assert(isfield(input_data, 'P'), 'Missing P');
+            assert(isfield(input_data, 'C'), 'Missing C');
+            assert(isfield(input_data, 'F'), 'Missing F');
             assert(isfield(input_data, 'beta'), 'Missing beta');
 
-            Q = input_data.Q; 
-            c = input_data.c;
-            M = input_data.M; 
-            r = input_data.r; 
+            P = input_data.P; 
+            C = input_data.C;
+            F = input_data.F; 
             bet = input_data.beta; 
+
+
+            % Then validate the rest of the sizes here 
+            % TODO -- validate the others 
+            % TODO -- options for EMPTY!!!!!!!!
+
+            % VALIDATE C, F 
+            if ~isa(P, 'function_handle')
+                P = @(~, ~) P;
+            end 
+            if ~isa(C, 'function_handle')
+                C = @(~, ~) C;
+            end 
+            if ~isa(F, 'function_handle')
+                F = @(~, ~) F;
+            end 
+            P_test = P(test_motor, test_gearbox);
+            C_test = C(test_motor, test_gearbox);
+            F_test = F(test_motor, test_gearbox);
+
+
+            m = size(P_test, 1);  % number of rows is constraints 
+
+
         else 
-            Q = {};
-            c = {};
-            M = {};
-            r = {};
-            bet = {};
+            % Let there be m rows to these constraints like before 
+            m = 0;
+            % TODO -- approriaely szied empty arrays 
+            P = [];
+            C = [];
+            F = [];
+            bet = [];
         end 
 
-        Q_empty = zeros(n, 1);  % the diagonal 
-        M_empty = sparse(w, w); 
-        c_empty = zeros(n, 1);    
-        r_empty = zeros(w, 1);   
+        % TODO -- quadcon -- for now assume none -- havent written any into examples 
 
-
-
-        m = numel(Q); 
-
+        % let these be specfied as row or columns 
+        p0_empty = zeros(n, 1); 
+        c0_empty = zeros(n, 1);
+        f0_empty = zeros(n, 1); 
 
         %
         %
@@ -670,47 +691,45 @@ methods (Access = private)
             problem_type = 'fractional'; 
 
 
-            Q0 = @(~, ~) Q_empty;
-            c0 = c_empty;
-            M0 = @(~, ~) M_empty;
-            r0 = r_empty;
+            p0 = @(~, ~) p0_empty;
+            c0 = c0_empty;
+            f0 = r_empty;
             beta0 = 0;
-
 
         else 
             problem_type = 'standard'; 
 
-            assert(isfield(input_data, 'Q0'), 'Missing Q0');
+            assert(isfield(input_data, 'p0'), 'Missing p0');
             assert(isfield(input_data, 'c0'), 'Missing c0');
-            assert(isfield(input_data, 'M0'), 'Missing M0');
-            assert(isfield(input_data, 'r0'), 'Missing r0');
+            assert(isfield(input_data, 'f0'), 'Missing f0');
             assert(isfield(input_data, 'beta0'), 'Missing beta0');
 
-            Q0 = input_data.Q0;
+            % TODO -- SOC/quadratic constraints 
+
+            p0 = input_data.p0;
             c0 = input_data.c0; 
-            M0 = input_data.M0; 
-            r0 = input_data.r0;
+            f0 = input_data.f0;
             beta0 = input_data.beta0; 
 
-                    %%
+            %%
             %
             %        validate objective terms 
             %
             %
-            if ~isa(Q0, 'function_handle'); Q0 = @(~, ~) Q0; end 
-            if ~isa(M0, 'function_handle'); M0 = @(~, ~) M0; end 
-            Q0_test = Q0(test_motor, test_gearbox);
+            if ~isa(p0, 'function_handle'); p0 = @(~, ~) p0; end 
+            p0_test = p0(test_motor, test_gearbox);
             if isa(c0, 'function_handle')
                 c0_test = c0(test_motor, test_gearbox);
             else 
                 c0_test = c0; 
             end 
-            M0_test = M0(test_motor, test_gearbox);
-            if isa(r0, 'function_handle')
-                r0_test = r0(test_motor, test_gearbox);
-            else 
-                r0_test = r0; 
+
+            if isa(f0, 'function_handle')
+                f0_test = f0(test_motor, test_gearbox);
+            else
+                f0_test = f0; 
             end 
+
             if isa(beta0, 'function_handle')
                 beta0_test = beta0(test_motor, test_gearbox);
             else 
@@ -720,26 +739,31 @@ methods (Access = private)
             % a little cumbersome but writing 'validate functions' could make this section of code much more managable
             % the validate function would return an appropriately sized empty term if emtpy and the other valudation
             % as neccearyy -- then would need nearly as much repeated code 
-            if isempty(Q0_test)     
-                Q0 = @(~, ~) Q_empty; 
+            if isempty(p0_test)     
+                p0 = @(~, ~) p0_empty; 
             end % else validate 
             if isempty(c0_test)
-                c0 = c_empty; 
-                c0_test = c_empty;
+                c0 = c0_empty; 
+                c0_test = c0_empty;
             end 
-            if isempty(M0_test)
-                M0 = @(~, ~) M_empty;
-            end 
-            if isempty(r0_test)
-                r0 = r_empty;
-                r0_test = r_empty;
+
+            if isempty(f0_test)
+                f0 = f0_empty;
+                f0_test = f0_empty;
             end 
             if isempty(beta0)
                 beta0 = 0;
             end
 
-            validate_c(c0_test, omega, n, 0);
-            validate_r(r0_test, w, 0);
+
+            % TODO TODO TODO TODO -- fix validation and allow 
+            % for empty inputs as standings for zero matrices
+            % AND allow for column OR row vector specificiation 
+            % internally -- convert it to one consistent type 
+            %validate_c(c0_test, omega, n, 0);
+            %validate_r(f0_test, w, 0);   % TODO -- rename or somethin 
+
+
         end 
 
 
@@ -763,16 +787,7 @@ methods (Access = private)
             h = input_data.h; 
         end 
 
-        G_ineq = [];    
-        h_ineq = [];
-        if isfield(input_data, 'G_ineq') || isfield(input_data, 'h_ineq') 
-            assert(isfield(input_data, 'G_ineq'),...
-                                          'Need to supply G_ineq AND h_ineq');
-            assert(isfield(input_data, 'h_ineq'),...
-                                          'Need to supply G_ineq AND h_ineq');
-            G_ineq = input_data.G_ineq;
-            h_ineq = input_data.h_ineq; 
-        end 
+
 
         % Direct bounds on x-variable 
         x_lb = -inf(w, 1);
@@ -787,11 +802,7 @@ methods (Access = private)
 
         % Check that others are the right size too
         if ~isa(G, 'function_handle');  G = @(motor, gearbox) G;      end 
-        if ~isa(G_ineq, 'function_handle')
-                        G_ineq = @(motor, gearbox) G_ineq;            end 
         if ~isa(h, 'function_handle');  h = @(motor, gearbox) h(:);   end 
-        if ~isa(h_ineq, 'function_handle')
-                        h_ineq = @(motor, gearbox) h_ineq(:);         end 
         if ~isa(x_ub, 'function_handle');  x_ub = @(motor, gearbox) x_ub(:); end 
         if ~isa(x_lb, 'function_handle');  x_lb = @(motor, gearbox) x_lb(:); end 
 
@@ -803,14 +814,9 @@ methods (Access = private)
         assert(size(G_test, 2) == w || isempty(G_test),...
                                          'Incorrect number of columns in H');
         assert(size(G_test, 1) == length(h_test), 'Size G and h incompatible')
-        p = length(h_test); 
+        
+        num_eq = length(h_test);   % DONT WANT IT CALLED P - confusing 
 
-        G_ineq_test = G_ineq(test_motor, test_gearbox); 
-        h_ineq_test = h_ineq(test_motor, test_gearbox); 
-        assert(size(G_ineq_test, 2) == w || isempty(G_ineq_test),...
-                            'Incorrect number of columns in G_ineq');
-        assert(size(G_ineq_test, 1) == length(h_ineq_test),...
-                         'Size G_ineq and h_ineq incompatible')
         x_lb_test = x_lb(test_motor, test_gearbox);
         x_ub_test = x_ub(test_motor, test_gearbox);
         assert(length(x_lb_test) == w, 'Incorrect x lower bound size');
@@ -833,24 +839,14 @@ methods (Access = private)
 
 
 
-
-
-
-        % Same for the rest -- switch to other seperate objective/contraints 
         %{
-        for j = 1:m + 1
-            % Check if input is function handle, if not make it so 
-            % NOTE: may want to change these too 
-            if ~isa(Q{j}, 'function_handle'); Q{j} = @(~, ~) Q{j}; end 
-            if ~isa(M{j}, 'function_handle'); M{j} = @(~, ~) M{j}; end 
-        end 
-        %} 
         for j = 1:m  % TODO -- dont force to be function handle (like r and c)
             % Check if input is function handle, if not make it so 
             % NOTE: may want to change these too 
             if ~isa(Q{j}, 'function_handle'); Q{j} = @(~, ~) Q{j}; end 
             if ~isa(M{j}, 'function_handle'); M{j} = @(~, ~) M{j}; end 
         end 
+        %} 
 
         % when f_j is encoding linear inequality -- its more  
         % efficient to explicitly encode these as linear constrainrts
@@ -862,8 +858,18 @@ methods (Access = private)
         % Letting c,r,beta be fixed instead of function handles can 
         % greatly speed up code 
         %for j = 1:m + 1   % NOTE: swticehd for seperate -- need to still validate objective though 
+
+
+        % TODO -- remove lin ineq 
         lin_ineq = zeros(m, 1);   % Indicator (1 = linear)
-        
+
+
+
+        % TODO -- add quadcon validation 
+
+        % TODO -- add validatatino that P \in R_{+}^{n x m}
+
+        %{
         for j = 1:m 
 
             Qj = Q{j}(test_motor, test_gearbox); % to test validity 
@@ -932,6 +938,7 @@ methods (Access = private)
                 validate_soc(Mj); 
             end 
         end 
+        %} 
 
        
 
@@ -950,9 +957,8 @@ methods (Access = private)
             problem_data.beta_den = input_data.beta_den; 
         end 
 
-        problem_data.Q0 = Q0;
-        problem_data.r0 = r0;
-        problem_data.M0 = M0;
+        problem_data.p0 = p0;
+        problem_data.f0 = f0;
         problem_data.c0 = c0; 
         problem_data.beta0 = beta0; 
 
@@ -961,23 +967,25 @@ methods (Access = private)
         problem_data.omega = omega;
         problem_data.omega_dot = omega_dot; 
 
-        problem_data.Q = Q;   % etc 
-        problem_data.c = c; 
-        problem_data.M = M; 
-        problem_data.r = r; 
+        % TODO -- quadratic constraints in here somehow (add later)
+
+        problem_data.P = P;   % etc 
+        problem_data.C = C;         % TODO
+        problem_data.F = F; 
         problem_data.beta = bet; 
 
 
         problem_data.G = G; 
-        problem_data.G_ineq = G_ineq; 
         problem_data.h = h; 
-        problem_data.h_ineq = h_ineq; 
+
         problem_data.x_lb = x_lb; 
         problem_data.x_ub = x_ub; 
 
 
         problem_data.zero_vel_idxs = find(omega == 0); 
-        problem_data.lin_ineq = lin_ineq; 
+        
+        problem_data.lin_ineq = lin_ineq; % Dont need anymore? all technically linear in x, I, I_sq
+        
         problem_data.I_max = I_max; 
         problem_data.V_max = V_max;
 
@@ -988,8 +996,11 @@ methods (Access = private)
         problem_data.n = n;
         problem_data.w = w;
         problem_data.m = m;
-        problem_data.p = p; 
 
+        %problem_data.p = p; 
+        problem_data.num_eq = num_eq; 
+
+        problem_data.num_quadcon = 0;   % TODO -- incorporate these 
 
     end % end validate problem data 
 
@@ -1456,8 +1467,8 @@ methods (Access = private)
 
         G = pd.G(motor, gearbox);
         h = pd.h(motor, gearbox);
-        G_ineq = pd.G_ineq(motor, gearbox);
-        h_ineq = pd.h_ineq(motor, gearbox); 
+
+
          % TODO -- remove confusion between A/b in solving socp and H/b in problem setuo
          % probablyt keep A/b and rename the 'b' in the problem setup context 
 
@@ -1470,8 +1481,9 @@ methods (Access = private)
         % dimensions 
         n = pd.n; 
         w = pd.w;
-        p = pd.p;
         m = pd.m; 
+
+        num_eq = pd.num_eq;  % TODO -- maybe consdier a new nameing conventino 
 
         zero_vel_idxs = pd.zero_vel_idxs; 
         nzvi = length(zero_vel_idxs); 
@@ -1822,6 +1834,8 @@ methods (Access = private)
         % for when all quadratic terms are empty
         % fill this up in preprocessing and then this step
         % becomes easier 
+
+        %{
         num_lin_ineq = nnz(pd.lin_ineq);
         if num_lin_ineq > 0 
             A_ineq_extra = zeros(num_lin_ineq, dim_y);
@@ -1831,10 +1845,21 @@ methods (Access = private)
             A_ineq_extra = []; 
             b_ineq_extra = [];
         end 
+        %} 
+
+        % With new approach -- m linear inequalities 
+        % rename to A_ineq_main 
+        A_ineq_main =  zeros(m, dim_y);
+        A_ineq_main(:, Isq_idxs) = pd.P(motor, gearbox);
+        A_ineq_main(:, I_idxs) = pd.C(motor, gearbox); 
+        A_ineq_main(:, x_idxs) = pd.F(motor, gearbox); 
+        b_ineq_main = -pd.beta; % TODO -- double check 
 
         
         quadcon = struct([]); % struct for quadratic/SOC constraints 
-      	
+        qc_idx = 0; 
+
+        %{
       	%
       	%		Incorporate Ineqaulity Constraints 
         %		Specified with Q, r, M, c, beta 
@@ -1909,7 +1934,7 @@ methods (Access = private)
             end 
 
         end 
-
+        %} 
        
         % TODO -- initial correct size of quadon 
         % TODO -- move this up and group all the if eta < 1 code 
@@ -1927,6 +1952,8 @@ methods (Access = private)
 		        vals = [1; -1; -1; 1]; 
 
 		        % gm^2 - 2 gm*mu + mu_^2 
+                % there are SO MANY function calls to this but probs
+                % no real way to make faster 
 	            Qc_tmp = sparse(row, col, vals, dim_y, dim_y); 
 		        q_tmp = zeros(dim_y, 1);
 		        q_tmp(s_idxs(i)) = -1; 
@@ -2026,6 +2053,8 @@ methods (Access = private)
         end 
 
         % Add the linear inequalities in G_ineq, h_ineq
+        %{
+        % Removed for faster implementation 
         if ~isempty(G_ineq)
         	% Add these to A_ineq other 
         	A_ineq_G = sparse([], [], [], size(G_ineq, 1), dim_y, nnz(G_ineq));
@@ -2035,29 +2064,36 @@ methods (Access = private)
         	A_ineq_extra = [A_ineq_extra; A_ineq_G];
         	b_ineq_extra = [b_ineq_extra;  -b_ineq_G]; % NOTE signs 
         end  
+        %}
 
         %% ----- Incorporate Actual Cost --------------
 
         if ~isempty(x_idxs)   % meaning fixed torque 
-            [M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
-            Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
-        									 M0_val, dim_y, dim_y); 
+            %[M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
+            % TODO -- incorporate the quadcons where quadratic costs 
+            % can actually come in 
+            % could have a seperate quadratic cost matrix specified in the cost though
+            % think about the cleanest way to do that 
+
+            %Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
+            %									 M0_val, dim_y, dim_y); 
+        
+            % TODO -- put options for quadratic constraints back in
+            % M0 is not actually a bad idea!!!! (then only the added complexitity )
+            % for quadratic constraints which is fine becaue M0 cant be SOC/RSOC anyway 
+            Q_cost = sparse(dim_y, dim_y); % EMPTY 
         else 
             Q_cost = sparse(dim_y, dim_y); 
         end  
 
-        %r0_tmp = pd.r{1};
-        r0_tmp = pd.r0; 
-
-        if isa(r0_tmp, 'function_handle')
-            r0 = r0_tmp(motor, gearbox);
+        f0_tmp = pd.f0; 
+        if isa(f0_tmp, 'function_handle')
+            f0 = f0_tmp(motor, gearbox);
         else 
-            r0 = r0_tmp;
-        end 
+            f0 = f0_tmp;
+        end
         
-        %beta0_tmp = pd.beta{1}; 
         beta0_tmp = pd.beta0; 
-
         if isa(beta0_tmp, 'function_handle')
             beta0 = beta0_tmp(motor, gearbox);
         else 
@@ -2066,9 +2102,9 @@ methods (Access = private)
         
         %Q0 = pd.Q{1}(motor, gearbox); % diag vector 
         %c0_tmp = pd.c{1};
-        Q0 = pd.Q0(motor, gearbox); % diag vector -- NOTE: should we do the function handle test here too? 
+        p0 = pd.p0(motor, gearbox); % diag vector -- NOTE: should we do the function handle test here too? 
+        
         c0_tmp = pd.c0;
-
         if isa(c0_tmp, 'function_handle')
             c0 = c0_tmp(motor, gearbox)
         else 
@@ -2077,8 +2113,8 @@ methods (Access = private)
         
         c_cost_init = zeros(dim_y, 1); 
         c_cost_init(I_idxs) = c0; 
-        c_cost_init(Isq_idxs) = Q0; % diag 
-        c_cost_init(x_idxs) = r0; 
+        c_cost_init(Isq_idxs) = p0; 
+        c_cost_init(x_idxs) = f0; 
 
         c_rho_aug = zeros(dim_y, 1); 
 
@@ -2100,8 +2136,13 @@ methods (Access = private)
     	matrices.beta0 = beta0;
     	matrices.A_eq = A_eq;
     	matrices.b_eq = b_eq; 
-    	matrices.A_ineq = [A_ineq_other; A_ineq_extra; A_lin_frac];
-    	matrices.b_ineq = [b_ineq_other; b_ineq_extra; b_lin_frac];
+    	%matrices.A_ineq = [A_ineq_other; A_ineq_extra; A_lin_frac];
+    	%matrices.b_ineq = [b_ineq_other; b_ineq_extra; b_lin_frac];
+
+        % below could be faster -- probably my kaing A_ineq_main sparse in the first place 
+        % and then concatenationg sparse matrices -- 
+        matrices.A_ineq = [A_ineq_main; A_ineq_other; A_lin_frac];   
+        matrices.b_ineq = [b_ineq_main; b_ineq_other; b_lin_frac];        
     	matrices.lb = lb; 
     	matrices.ub = ub; 
     	matrices.quadcon = quadcon; 

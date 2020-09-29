@@ -58,23 +58,15 @@ pwr_idxs = 3:(3 + n - 1);  % indices corresponding to power consumed at each tim
 
 
 % Fill in Objective --- slpit out ibjective 
-Q0 = []; 
+p0 = []; 
 c0 = []; 
-M0 = [];
-
-r0 = zeros(w, 1);
-r0(pwr_idxs(1):pwr_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
-r0(pwr_idxs(2):pwr_idxs(end)) = r0(pwr_idxs(2):pwr_idxs(end)) + 0.5*ones(n - 1, 1).*diff(time);
+f0 = zeros(w, 1);
+f0(pwr_idxs(1):pwr_idxs(end - 1)) = 0.5*ones(n - 1, 1).*diff(time);
+f0(pwr_idxs(2):pwr_idxs(end)) = f0(pwr_idxs(2):pwr_idxs(end)) + 0.5*ones(n - 1, 1).*diff(time);
 beta0 = 0; 
 
 
 % Define efficiencies psi, 
-
-Q = {}; 
-c = {};  
-M = {};
-r = {}; 
-bet = {};
 
 
 
@@ -130,6 +122,14 @@ Phi = 0.99; % driver board efficienc
 Phi_inv = 1/Phi; 
 Psi = 0.8; % regen efficincy psi 
 % Fill in general inequality constraints 
+%{
+Q = {}; 
+c = {};  
+M = {};
+r = {}; 
+bet = {};
+
+
 for j = 1:n  % Loop through the time indices 
 
     % If positive power conumption 
@@ -160,7 +160,19 @@ for j = 1:n  % Loop through the time indices
     r{end + 1, 1} = r_tmp;  % accounting for the other vars 
     bet{end + 1, 1} = 0; 
 end 
+%} 
 
+
+% Comment here should then explain what each row of this inequality looks like 
+tmp_mat = sparse(eye(n)); 
+P = @(motor, gearbox) motor.R * [Phi_inv * tmp_mat; Psi * tmp_mat]; 
+omega_diag = sparse(diag(omega));
+C = @(motor, gearbox) motor.k_t*gearbox.direction*gearbox.ratio * [Phi_inv*omega_diag; Psi*omega_diag]; 
+
+% NOTE on how it can be faster to declare like this 
+F_tmp = sparse(1:2*n, [pwr_idxs, pwr_idxs], -ones(1, 2*n), 2*n, w);
+F = F_tmp; 
+bet = zeros(2*n, 1); % no constant offsets 
 
 %% Add bounds on the spring properties (will make solving easier )
 x_lb = -inf(w, 1);
@@ -190,18 +202,19 @@ problem_data.I_max = I_max;
 problem_data.V_max = V_max; 
 
 % Fill in Objective
-problem_data.Q0 = Q0;
-problem_data.M0 = M0;
+problem_data.p0 = p0;
 problem_data.c0 = c0;
-problem_data.r0 = r0;
+problem_data.f0 = f0;
 problem_data.beta0 = beta0;
 
+% TODO add M0 
+
 %% Fill in other constraints 
-problem_data.Q = Q;
-problem_data.c = c; 
-problem_data.M = M; 
-problem_data.r = r; 
+problem_data.P = P;
+problem_data.C = C; 
+problem_data.F = F; 
 problem_data.beta = bet; 
+
 problem_data.x_lb = x_lb;
 problem_data.x_ub = x_ub; 
 
@@ -211,7 +224,7 @@ problem_data.x_ub = x_ub;
 
 %settings.solver = 'ecos';   % if we wanted to use ecos 
 settings.solver = 'gurobi';
-prob = cords('settings', settings, 'reuse_db', false); % instantiate new motor selection problem 
+prob = cords('settings', settings, 'reuse_db', true); % instantiate new motor selection problem 
 prob.update_problem(problem_data);   % update with the data 
 
 %{
