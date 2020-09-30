@@ -69,9 +69,8 @@ selection_filters.total_mass = 4; % only accept combinations lighter than 4 kg
 % Solve the problem 
 settings.solver = 'gurobi';     % set the solver to gurobi (the default)
 % instantiate new motor selection problem and build a new database
-display('change reuse back to false')
 
-prob = cords('settings', settings, 'reuse_db', true); 
+prob = cords('settings', settings, 'reuse_db', false); 
 prob.update_filters(selection_filters); 
 num_solutions  = 100; 
 

@@ -17,7 +17,7 @@ CORDS can solve any motor/gearbox selection problem that can be cast as the prob
 CORDS solves 
 $$
 \begin{align*}
-\underset{x, I}{\text{minimize}} \quad   p_0^T i_{sq}  + c_0^T i + x^T M_0 x &+ f_0^T x + \beta_0      \\
+\underset{x, i}{\text{minimize}} \quad   p_0^T i_{sq}  + c_0^T i + x^T M_0 x &+ f_0^T x + \beta_0      \\
    \text{subject to} \quad \qquad \qquad \qquad \qquad \qquad &                  \\
       \text{motor/gearbox output torque}  &=   T x + \tau_c                      \\
  \end{align*}
@@ -25,7 +25,7 @@ $$
  with optional contraints 
  $$ 
  \begin{align*}
-            P (i_{sq}) + C i  +  F x + \beta &\preceq 0  \\
+            P i_{sq} + C i  +  F x + \beta &\preceq 0  \\
                       G x + h &= 0             \\
                 x_{lb} \preceq x &\preceq x_{ub}         \\
 \end{align*}
@@ -33,13 +33,15 @@ $$
 
 with motor currents $i \in \mathbf{R}^n$, motor currents *squared* $i_{sq} \in \mathbf{R}^n$, and auxiliary variables $x \in \mathbf{R}^w$ where the problem inputs satsify: 
 * $p_0 \in \mathbf{R}_{+}^{n \times 1}$, vector of non-negative coefficients 
-* $c_0 \in \mathbf{R}^n$ satisfies $c_{j}^{i} \omega^i \geq 0$ for $i = 1...n$
-* $M_0 \in \mathbf{R}^{w \times w}$, symmetric PSD
+* $c_0 \in \mathbf{R}^n$ satisfies $c_{0}^{i} \omega^i \geq 0$ for $i = 1...n$
 * $P \in \mathbf{R}_{+}^{n \times m}$, matrix of non-negative coefficients 
 * $C \in \mathbf{R}^{n \times m}$ satisfies $c_{j}^{i} \omega^i \geq 0$ for each row of C ($j = 1...m$) and $i = 1...n$
-Quadratic and Second Order Cone constraints can also be applied on the optimization variable ($x$). 
+* $M_0 \in \mathbf{R}^{w \times w}$, symmetric PSD
 
-CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(f_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(f_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
+
+Quadratic and Second Order Cone constraints can also be applied on the optimization variable $x$. 
+
+CORDS can also solve *linear fractional programs* where the minimization objective is replaced with $\left(f_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(f_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
 
 
 ## Problem Interfaces
@@ -51,7 +53,7 @@ We provide interfaces to simplify using CORDS for common optimization objectives
 
 
 ## A Simple Example - Minimizing Joule Heating 
-First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the FFF documentation. Minimizing joule heating means minimizing $\sum_{i = 1}^{n} R (I^{i})^2$ where $R$ is the motor resistance and $I^{i}$ is the current at timestep $i$. 
+First we build a structure of problem data to pass to the CORDS optimizer. Dependence on motor/gearbox properties can be accomplished using anonymous functions (eg. ``total_mass = @(motor, gearbox) motor.mass + gearbox.mass``. For a list of valid ``motor`` and ``gearbox`` properties see the [MGDB documentation](https://github.com/ekrimsk/MGDB/). Minimizing joule heating means minimizing $\sum_{j = 1}^{n} R i_{sq}^{j}$ where $R$ is the motor resistance and $i_{sq}^{j}$ is the current squared at timestep $j$. 
 ```
 >> load('example_data.mat', 'theta', 'omega', 'omega_dot', 'tau_des');   % load in data
 >> data = struct();        % empty struct with no fields that we will fill in 
@@ -66,8 +68,11 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data.V_max = 24;     % set 24 Volt voltage limit 
 >> data.tau_c = tau_des;
 >> data.T = [];         % simple case, no x variable 
+>> prob = cords();                  % create a new cords object with default settings  
+>> prob.update_problem(data);       % attach the data to the problem
+>> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
 ```
-Adding a parallel elastic element with stiffness $k_p$, the torque equality becomes
+Now we will optimize a spring that act in paralle with the joint to reduce Joule heating. Adding a parallel elastic element with stiffness $k_p$, the torque equality becomes
 $$
      \text{motor/gearbox output torque}  = - k_p \theta  + \tau_{des} 
 $$
@@ -76,12 +81,8 @@ letting the optimation vector $x$ encode the parallel stiffness $k_p$ we can rew
 ```
 >> data.T = [-theta(:)];      % include coupling of motor torque and spring torque
 ```
-We now pass this data to the CORDS optimizer
-```
->> prob = cords();                  % create a new cords object with default settings  
->> prob.update_problem(data);       % attach the data to the problem
->> solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
-```
+We can now pass this new `data` to the CORDS optimizer to optimize the motor and spring. 
+
 
 
 ## Requirements
