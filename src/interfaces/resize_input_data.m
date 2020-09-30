@@ -33,17 +33,6 @@ function input_data = resize_input_data(input_data, w_init, w_add)
         end
     end 
 
-    if isfield(input_data, 'G_ineq')
-        G_ineq_tmp = input_data.G_ineq;
-        G_ineq_pad = sparse(size(input_data.G_ineq, 1), w_add); 
-        if isa(G_ineq_tmp, 'function_handle')
-            input_data.G_ineq = @(motor, gearbox) [G_ineq_tmp(motor,gearbox),...
-                                                                  G_ineq_pad]; 
-        else 
-            input_data.G_ineq = [G_ineq_tmp, G_ineq_pad]; 
-        end 
-    end  
-
     
     xlb_pad = -inf(w_add, 1);
     if isfield(input_data, 'x_lb')
@@ -67,53 +56,59 @@ function input_data = resize_input_data(input_data, w_init, w_add)
     end  
 
 
-
-
-    if isfield(input_data, 'Q') % needs to have all anyway 
-        Q = input_data.Q; 
-        c = input_data.c;
-        M = input_data.M; 
-        r = input_data.r; 
+    if isfield(input_data, 'P') % needs to have all anyway 
+        P = input_data.P; 
+        C = input_data.C;
+        F = input_data.F; 
         bet = input_data.beta;
     else 
-        Q = {}; 
-        c = {};
-        M = {};
-        r = {};
-        bet = {};
+        P = [];
+        C = [];
+        F = []; 
+        bet = [];
     end 
 
     %% Fill in constraints 
     
-    num_qc = numel(Q); % Number of quadratic constraints 
 
-    % Appropriately size empty sparse matrices for padding M
-    M_rpad = sparse(w_add, w_add);      % pad right 
-    M_bpad = sparse(w_add, w);  % pad bottom
+    if isfield(input_data, 'quadcon')
+        quadcon = @(motor, gearbox) resize_quadcon(motor, gearbox,...
+                                 input_data.quadcon, w_add);
+    else 
+        input_data.quadcon = struct([]); % for consistency really 
+    end 
 
-    % Q, c only act on currents, dont need to be resized 
-    for jj = 1:num_qc   % loop through the quadratic constraints and resize appropriatly 
-        if ~isempty(M{jj}) 
-            if isa(M{jj}, 'function_handle')
-                M{jj} = @(motor, gearbox) [M{jj}(motor, gearbox), M_pad;  M_bpad] % reindexing into sparse array 
-            else 
-                M{jj} = @(~, ~) [M{jj}, M_pad;  M_bpad] % reindexing into sparse array 
-            end 
-        end 
-
-        if ~isempty(r{jj})
-            if isa(r{jj}, 'function_handle')
-                r{jj} = @(motor, gearbox) [r{jj}(motor, gearbox); zeros(w_add, 1)];
-            else 
-                r{jj} = [r{jj}; zeros(w_add, 1)];
-            end
-        end 
-    end   % end resizing quadratic constraints 
-
-
-    input_data.Q = Q;
-    input_data.c = c;
-    input_data.M = M;
-    input_data.r = r; 
+    input_data.P = P;
+    input_data.C = C;
+    input_data.F = F;
     input_data.beta = bet; 
+
+end 
+
+
+
+function new_quadcon = resize_quadcon(motor, gearbox, init_quadcon, w_add)
+
+    q_pad = zeros(w_add, 1); 
+
+    if isa(init_quadcon, 'function_handle')
+        init_quadcon = init_quadcon(motor, gearbox);
+    end 
+
+    num_qc = numel(init_quadcon); 
+
+    for i = 1:num_qc
+        if isfield(init_quadcon(i), 'Qc')
+            [Qrow, Qcol, Qval] = find(init_quadcon(i).Qc); % assumed sparse 
+        else 
+            Qrow = init_quadcon(i).Qrow;
+            Qcol = init_quadcon(i).Qcol;
+            Qval = init_quadcon(i).Qval;
+        end 
+        new_quadcon(i).Qrow = Qrow;
+        new_quadcon(i).Qcol = Qcol;
+        new_quadcon(i).Qval = Qval; 
+        new_quadcon(i).q = [init_quadcon(i).q(:); q_pad]
+        new_quadcon(i).rhs = init_quadcon(i).rhs; 
+    end 
 end 
