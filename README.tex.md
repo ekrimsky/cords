@@ -1,6 +1,6 @@
 # Convex Optimal Robot Drive Selection (CORDS)
 
-CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over tens of thousands motor and gearbox combinations specified in a [motor/gearbox data base folder](https://github.com/ekrimsk/MGDB/). 
+CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over tens of thousands motor and gearbox combinations specified in a [motor/gearbox database folder](https://github.com/ekrimsk/MGDB/). 
 
 CORDS requires the user to specify a trajectory of robot joint velocities $\omega$ and to parametrize the desired joint torques through an optimization problem. For simple cases where both the joint trajectory *and the joint torques* are known, check out the CORDS web interface (A LINK - keenon make this website plz). 
 
@@ -17,7 +17,7 @@ CORDS can solve any motor/gearbox selection problem that can be cast as the prob
 CORDS solves 
 $$
 \begin{align*}
-\underset{x, I}{\text{minimize}} \quad  I^T Q_0 I  + c_0^T I + x^T M_0 x &+ r_0^T x + \beta_0      \\
+\underset{x, I}{\text{minimize}} \quad   p_0^T i_{sq}  + c_0^T i + x^T M_0 x &+ f_0^T x + \beta_0      \\
    \text{subject to} \quad \qquad \qquad \qquad \qquad \qquad &                  \\
       \text{motor/gearbox output torque}  &=   T x + \tau_c                      \\
  \end{align*}
@@ -25,20 +25,21 @@ $$
  with optional contraints 
  $$ 
  \begin{align*}
-            I^T Q_j I + c_j^T I +  x^T M_j x + r_j^T x + \beta_j &\leq 0,\quad \text{for}\;j = 1...m \\
-           G_{eq} x + h_{eq} &= 0                                                            \\
-           G_{ineq} x + h_{ineq} &\preceq 0                                                  \\
-                x_{lb} \preceq x &\preceq x_{ub}                                             \\
+            P (i_{sq}) + C i  +  F x + \beta &\preceq 0  \\
+                      G x + h &= 0             \\
+                x_{lb} \preceq x &\preceq x_{ub}         \\
 \end{align*}
 $$
 
-with motor currents $I \in \mathbf{R}^n$ and auxiliary variables $x \in \mathbf{R}^w$ where the problem inputs satsify: 
-* $Q_j \in \mathbf{R}^{n \times n}$, diagonal PSD matrix for $j = 0...m$
+with motor currents $i \in \mathbf{R}^n$, motor currents *squared* $i_{sq} \in \mathbf{R}^n$, and auxiliary variables $x \in \mathbf{R}^w$ where the problem inputs satsify: 
+* $p_0 \in \mathbf{R}_{+}^{n \times 1}$, vector of non-negative coefficients 
+* $c_0 \in \mathbf{R}^n$ satisfies $c_{j}^{i} \omega^i \geq 0$ for $i = 1...n$
 * $M_0 \in \mathbf{R}^{w \times w}$, symmetric PSD
-* $M_j \in \mathbf{R}^{w \times w}$, for $j=1...m$ symmetric PSD or encodes SOC constraint (see cords.update_problem)
-* $c_j \in \mathbf{R}^n$ satisfies $c_{j}^{i} \omega^i \geq 0$ for $j = 1...m$ and $i = 1...n$
+* $P \in \mathbf{R}_{+}^{n \times m}$, matrix of non-negative coefficients 
+* $C \in \mathbf{R}^{n \times m}$ satisfies $c_{j}^{i} \omega^i \geq 0$ for each row of C ($j = 1...m$) and $i = 1...n$
+Quadratic and Second Order Cone constraints can also be applied on the optimization variable ($x$). 
 
-CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(r_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(r_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
+CORDS can also solve linear fractional programs where the minimization objective is replaced with $\left(f_{\text{num}}^T x + \beta_{\text{num}}\right)/\left(f_{\text{den}}^T x + \beta_{\text{den}}\right)$. 
 
 
 ## Problem Interfaces
@@ -56,10 +57,10 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data = struct();        % empty struct with no fields that we will fill in 
 >> data.omega = omega;
 >> data.omega_dot = omega_dot; 
->> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
+>> data.p0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
 >> data.c0 = [];        % all other cost terms can be left empty
 >> data.M0 = [];
->> data.r0 = [];
+>> data.f0 = [];
 >> data.beta0 = []; 
 >> data.I_max = 80;     % set 80 Amp current limit
 >> data.V_max = 24;     % set 24 Volt voltage limit 
@@ -87,7 +88,7 @@ We now pass this data to the CORDS optimizer
 * Matlab 2017b or later but I dont really know, delaey does it work?
 * [Gurobi 8.1 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
 
-Gurobi offers better performance than the ECOS solver but is only free for academic use. 
+Gurobi usually offers better performance than the ECOS solver but is only free for academic use. 
 
 ## Installation
 
@@ -95,9 +96,9 @@ Install CORDS by cloning the repository to your Matlab directory
 ```
 git clone --recurse-submodules https://github.com/ekrimsk/CORDS.git
 ```
-where adding `--recurse-submodules` will clone the motor/gearbox database as well. 
+where adding `--recurse-submodules` will clone the motor/gearbox database as well. Alternatively, you can download and extract the zip and seperately download the [motor database](https://github.com/ekrimsk/MGDB/) and move it to `CORDS/MGDB` on your machine. 
 
-CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/CORDS))`. Running `savepath` will then add CORDS to your default Matlab path. On linux systems you may need to add `addpath path_to_cords/CORDS` to you `startup.m` file. OR 
+CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/CORDS))`. Running `savepath` will then add CORDS to your default Matlab path. On linux systems you may need to add `addpath path_to_cords/CORDS` to you `startup.m` file. 
 
 ## Documentation 
 
