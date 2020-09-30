@@ -56,19 +56,17 @@ classdef cords < handle
 %
 %
 %
-%   What kind of problems can optimize solve with CORDS?
-%     see our documentation but in short.....
-%       see documnetion for update problelm for details on valud problem inputs 
 %
-%   minimize I'*Q0*I + c0'*I + x'*M0*x + r0'*x + beta0
+%  CORDS Solves:
+%      
+%
+%   minimize  p0'(I.^2) + c0'*I + x'*M0*x + f0'*x + beta0
 %   subject to: 
 %         T*x + tau_c = motor/gearbox output torque 
-%            x_lb <= x <= x_ub
-%           G*x + h = 0
-%           G_ineq*x + h_ineq <= 0
-%     I'*Qj*I + cj'*I + x'*Mj*x + rj'*x + betaj <= 0, for j = 1...m 
-%
-%   where -- the requirements on the inputs 
+%        P*(I.^2) + C*I + F*x + beta <= 0 
+%                    G*x + h = 0
+%                  x_lb <= x <= x_ub
+%         
 %
 %   A reference to the github:
 %   A reference to the eventual paper 
@@ -136,10 +134,10 @@ methods (Access = public)
         obj.tolerances = default_tolerances();
         obj.physics = default_phyics(); 
 
+
         obj.update_settings(ip.Results.settings);
         obj.update_tolerances(ip.Results.tolerances);
         obj.update_physics(ip.Results.physics);
-
       
         % Look for a saved file called motor_database.mat (start looking in pwd?)
         % If cannot find a file create one and then save it
@@ -192,16 +190,15 @@ methods (Access = public)
     %
     %
     %   For type 1 (SOCP) problems, cords solves
-    %               minimize    I'*Q0*I + c0'*I + x'*M0*x + r0'*x + beta0
+    %         minimize    p0'*(I.^2) + c0'*I + x'*M0*x + f0'*x + beta0
     %
     %   For type 2 (linear-fractional) problems, cords solves
-    %             minimize    (r_num'*x + beta_num)/(r_den'*x + beta_den)
+    %             minimize    (f_num'*x + beta_num)/(f_den'*x + beta_den)
     %
     %   subject to (for both problem types): 
     %                   T*x + tau_c = motor/gearbox output torque 
+    %               P*(I.^2) + C*I + F*x + beta <= 0, for j = 1...m 
     %                            G*x + h = 0
-    %                 G_ineq*x + h_ineq <= 0
-    %     I'*Qj*I + cj'*I + x'*Mj*x + rj'*x + betaj <= 0, for j = 1...m 
     %                         x_lb <= x <= x_ub
     % 
     %   where I is an (n x 1) vector of motor currents and x is a (w x 1)
@@ -213,65 +210,23 @@ methods (Access = public)
     %   For example:
     %        T = @(motor, gearbox) motor.mass * ones(n, w); % depends on motor 
     %   If the input does not depend on the motor and gearbox it can be given
-    %   as a constant (eg. T = eye(n));
+    %   as a constant (e.g. T = eye(n));
     %       
     %   The struct 'input_data' has the following fields:
     %     
     %   Required fields for either problem type:
-    %       T     - (n x w) matrix relating x variables to torques 
+    %       T     - (n x w) matrix coupling x variables to torques 
     %       tau_c - (n x 1) vector of 'constant' torques  
     %       omega -  (n x 1) vector of the joint velocity (NOTE: if using a 
     %               gearbox this is not the same as the motor velocity) in rad/s
     %       I_max - maximum permissible current (in Amps)
     %       V_max - maximum available drive voltage
     %
-    %   Optional fields optional input for either problem type:
-    %       omega_dot - (n x 1) vector of joint accelerations (rad/s^2). If 
-    %                       empty no inertial compenstation is performed  
-    %       Q         - (m x 1) CELL array where each cell contains an (n x 1)
-    %                    vector of non-negative values on the diagonal of Q. 
-    %       c         - (m x 1) CELL array where each cell contains an (n x 1)
-    %                    vector satisfying (gearbox.direction)*c.*omega >= 0
-    %       M         - (m x 1) CELL array where each cell contains a symmetric 
-    %                   sparse (w x w) matrix. Each M{i} (for i = 1:m) can take
-    %                   on 3 possible forms:
-    %                   1) Standard Quadratic - in this case M{i} is PSD 
-    %                   2) Standard Second Order Cone - in this case M{i} 
-    %                      is made up of a PSD block and a -1 on its diagonal.
-    %                      The corresponding Q{i}, c{i}, r{i} and beta{i} must 
-    %                      all be empty. 
-    %                      For example:
-    %                           M{i} = [a   0   0
-    %                                   0   b   0
-    %                                   0   0  -1],
-    %                      encodes a*x1^2 + b*x2^2 <= x3^2 (an SOC Constraint),
-    %                      where x3 is implicitly constrained to be non-negative
-    %                   3) Rotated Second Order Cone - in this case M{i} is made 
-    %                      up of a PSD block and a row column/pair that each 
-    %                      contain one non-zero on an off diagonal.
-    %                      The corresponding Q{i}, c{i}, r{i} and beta{i} must 
-    %                      all be empty. 
-    %                      For example:
-    %                          M{i} = [a    0      0
-    %                                  0    0   -0.5
-    %                                  0  -0.5     0],
-    %                      encodes a*x1^2 <= x2*x3
-    %                      where x2 and x3 are implicitly constrained to be 
-    %                      non-negative
-    %       r         - (m x 1) CELL array, each cell contains a (w x 1) vector  
-    %       beta      - (m x 1) CELL array, each cell contains one scalar       
-    %       x_lb      - (w x 1) vector of lower bounds on x (can be -inf) 
-    %       x_ub      - (w x 1) vector of upper bounds on x (can be inf)
-    %       G         - (? x w) equality constraint matrix on x 
-    %       h         - (? x 1) vector for equality constraints on x 
-    %       
-    %
-    %
-    %   Required fields for SOCP problems (NOTE, each can be empty):
-    %       Q0    -  (n x 1) vector of non-negative values on the diagonal of Q0       
+    %   Required fields for SOCP problems (NOTE, each can be empty, i.e. []):
+    %       p0    -  (n x 1) vector of non-negative 
     %       c0    -  (n x 1) vector satisfying (gearbox.direction)*c.*omega >= 0
     %       M0    -  sparse PSD (w x w) matrix 
-    %       r0    -  (w x 1) vector 
+    %       f0    -  (w x 1) vector 
     %       beta0 -  constant cost scalar 
     %
     %
@@ -281,10 +236,68 @@ methods (Access = public)
     %   Required fields for linear fractional problems:
     %       cost_ub  - a finite upper bound on the optimal objective
     %       cost_lb  - a finite lower bound on the optimal objective
-    %       r_num    - (w x 1) vector 
-    %       r_den    - (w x 1) vector 
+    %       f_num    - (w x 1) vector 
+    %       f_den    - (w x 1) vector 
     %       beta_num - a scalar 
     %       beta_den - a scalar 
+    %
+    %   Optional fields for either problem type:
+    %       omega_dot - (n x 1) vector of joint accelerations (rad/s^2). If 
+    %                       empty no inertial compenstation is performed  
+    %       P         - (m x n) sparse matrix of non-negative values
+    %       C         - (m x n) sparse matrix where each row c_j of C satisfies
+    %                    (gearbox.direction)*c_j.*omega >= 0
+    %       F         - (m x w) sparse matrix  
+    %       beta      - (m x 1) vector       
+    %       x_lb      - (w x 1) vector of lower bounds on x (can be -inf) 
+    %       x_ub      - (w x 1) vector of upper bounds on x (can be inf)
+    %       G         - (? x w) equality constraint matrix on x 
+    %       h         - (? x 1) vector for equality constraints on x 
+    %       quadcon   - a struct array for adding additional quadratic or 
+    %                   second order cone constraints on x. These inputs
+    %                   follow the same conventions as quadratic constraints
+    %                   in the gurobi matlab interface. Each struct 
+    %                   quadcon(i) specifies values for the following:
+    %
+    %                       x^T Qc x + q'x <= rhs
+    %
+    %                   quadcon(i).rhs - a scalar  
+    %                   quadcon(i).q - a (w x 1) vector. If q is has 
+    %                        nonzeros is must be full (non-sparse) vector
+    %                        if Qc is encoding a second order cone 
+    %                        constraint then q must be all zeros
+    %                   Users can speficify EITHER: 
+    %                   quadcon(i).Qc - a symmetric sparse (w, w) matrix. 
+    %                        There are 3 general type of quadratic 
+    %                        constraints that can be used:
+    %
+    %                   1) Standartd Quadratic 
+    %                       If quadcon(i).q is NOT all zeros, quadcon(i).Qc
+    %                       must be PSD.
+    %                   2) Standard Second Order Cone - in this case 
+    %                      quadcon(i).Qc  is made up of a PSD block and a -1 on 
+    %                      its diagonal. In this case we requires quadcon(i).q
+    %                      and quadcon(i).rhs are zero. 
+    %                      For example:  
+    %                          quadcon(i).Qc = [a   0   0
+    %                                           0   b   0
+    %                                           0   0  -1],
+    %                      encodes a*x1^2 + b*x2^2 <= x3^2 (an SOC Constraint),
+    %                      where x3 is implicitly constrained to be non-negative
+    %                   3) Rotated Second Order Cone - in this case quadcon(i).Qc
+    %                      is made up of a PSD block and a row column/pair that each 
+    %                      contain one non-zero on an off diagonal. In this case
+    %                      we requires quadcon(i).q  and quadcon(i).rhs are zero.
+    %                      For example quadcon(i).Qc = [a    0      0
+    %                                                   0    0   -0.5
+    %                                                    0  -0.5     0],
+    %                      encodes a*x1^2 <= x2*x3
+    %                      where x2 and x3 are implicitly constrained to be 
+    %                      non-negative
+    %                   
+    %                   Alternatively, instead of specifying the matrix Qc,
+    %                   one can specify the dense vector Qrow, Qcol, Qval
+    %                   where Qc = sparse(Qrow, Qcol, Qval, w, w)
     %
     %
     %   See the example1 code for an example on defining function handles 
@@ -400,6 +413,8 @@ methods (Access = public)
                 error('update_settings: invalid field %s', field);
             end 
         end 
+
+
         has_gurobi = ~isempty(which('gurobi.m'));
         has_ecos = ~isempty(which('ecos.m'));
         if ~any([has_gurobi, has_ecos])
@@ -408,7 +423,7 @@ methods (Access = public)
         if isfield(new_settings, 'solver')
             settings.solver = new_settings.solver; 
         end
-        if strcmpi(settings.solver, 'gurobi')
+        if strcmpi(new_settings.solver, 'gurobi')
             if ~has_gurobi
                 if has_ecos
                     has_ecos; settings.solver = 'ecos'; 
@@ -416,7 +431,7 @@ methods (Access = public)
                 warning('Gurobi solver not found, using %s', settings.solver);                
             end 
         end 
-        if strcmpi(settings.solver, 'ecos')
+        if strcmpi(new_settings.solver, 'ecos')
             if ~has_ecos
                 if has_gurobi
                     settings.solver = 'gurobi'; 
@@ -566,7 +581,7 @@ methods (Access = private)
         %    isfield(input_data, 'M') || isfield(input_data, 'r') || ...
         %    isfield(input_data, 'b')
         if isfield(input_data, 'P') || isfield(input_data, 'C') || ...
-            isfield(input_data, 'F') || isfield(input_data, 'beta')
+            isfield(input_data, 'F') || isfield(input_data, 'beta') 
 
             % if specified any of these, need to specify all of them 
             assert(isfield(input_data, 'P'), 'Missing P');
@@ -574,60 +589,44 @@ methods (Access = private)
             assert(isfield(input_data, 'F'), 'Missing F');
             assert(isfield(input_data, 'beta'), 'Missing beta');
 
-            P = input_data.P; 
-            C = input_data.C;
-            F = input_data.F; 
-            bet = input_data.beta; 
-
-
-            % Then validate the rest of the sizes here 
-            % TODO -- validate the others 
-            % TODO -- options for EMPTY!!!!!!!!
-
-            % VALIDATE C, F 
-            if ~isa(P, 'function_handle')
-                P = @(~, ~) P;
-            end 
-            if ~isa(C, 'function_handle')
-                C = @(~, ~) C;
-            end 
-            if ~isa(F, 'function_handle')
-                F = @(~, ~) F;
-            end 
-            P_test = P(test_motor, test_gearbox);
-            C_test = C(test_motor, test_gearbox);
-            F_test = F(test_motor, test_gearbox);
-
-
+            [P, P_test] = validate_P(input_data.P, n, test_motor, test_gearbox);
             m = size(P_test, 1);  % number of rows is constraints 
 
-
+            C = validate_C(input_data.C, omega, test_motor, test_gearbox);
+            F = validate_F(input_data.F, w, test_motor, test_gearbox);
+            bet = validate_beta(input_data.beta, m, test_motor, test_gearbox); 
         else 
             % Let there be m rows to these constraints like before 
             m = 0;
-            % TODO -- approriaely szied empty arrays 
-            P = [];
-            C = [];
-            F = [];
-            bet = [];
+            P_empty = zeros(0, n); % empty but the right size 
+            C_empty = zeros(0, n); % empty but the right size 
+            F_empty = zeros(0, w);
+            bet_empty = zeros(0, 0);
+            P = @(~, ~) P_empty; 
+            C = @(~, ~) C_empty;
+            F = @(~, ~) F_empty;
+            bet = @(~, ~) bet_empty;
         end 
 
-        % TODO -- quadcon -- for now assume none -- havent written any into examples 
+
 
         % let these be specfied as row or columns 
         p0_empty = zeros(n, 1); 
         c0_empty = zeros(n, 1);
-        f0_empty = zeros(n, 1); 
-
+        f0_empty = zeros(w, 1); 
+        M0_empty = sparse(w, w); 
         %
         %
         %         Validating inputs for linear fractional problems 
+        %       
+        %                   OR (after the else)
         %
+        %       Validating objective terms for standard problems
         %
         if (isfield(input_data, 'cost_ub') && ~isempty(input_data.cost_ub)) ||...
            (isfield(input_data, 'cost_lb') && ~isempty(input_data.cost_lb)) ||...
-           (isfield(input_data, 'r_num') && ~isempty(input_data.r_num)) ||...
-           (isfield(input_data, 'r_den') && ~isempty(input_data.r_den))  || ...
+           (isfield(input_data, 'f_num') && ~isempty(input_data.f_num)) ||...
+           (isfield(input_data, 'f_den') && ~isempty(input_data.f_den))  || ...
            (isfield(input_data, 'beta_num') && ~isempty(input_data.beta_num)) ||...
            (isfield(input_data, 'beta_den') && ~isempty(input_data.beta_den)) 
 
@@ -640,11 +639,11 @@ methods (Access = private)
             assert(isfield(input_data, 'cost_lb') &&...
                  ~isempty(input_data.cost_lb),...
                  'Cost lower bound required for fractional problems'); 
-            assert(isfield(input_data, 'r_num') &&...
-                 ~isempty(input_data.r_den),...
+            assert(isfield(input_data, 'f_num') &&...
+                 ~isempty(input_data.f_den),...
                  'Numerator vector required for fractional problems'); 
-            assert(isfield(input_data, 'r_den') &&...
-                 ~isempty(input_data.r_num),...
+            assert(isfield(input_data, 'f_den') &&...
+                 ~isempty(input_data.f_num),...
                  'Denominator vector required for fractional problems'); 
             assert(isfield(input_data, 'beta_num') &&...
                  ~isempty(input_data.beta_num),...
@@ -659,8 +658,8 @@ methods (Access = private)
                     'Cost upper bound must be greater than lower bound'); 
 
             % make col vec regardless of input 
-            input_data.r_num = input_data.r_num(:); 
-            input_data.r_den = input_data.r_den(:); 
+            input_data.f_num = input_data.f_num(:); 
+            input_data.f_den = input_data.f_den(:); 
 
             % Size + Range Check on inputs 
             assert(isscalar(input_data.cost_ub), 'Cost upper bound must be scalar');
@@ -671,20 +670,20 @@ methods (Access = private)
             assert(~isinf(input_data.beta_num), 'beta_num must be finite');
             assert(isscalar(input_data.beta_den), 'beta_den must be scalar');
             assert(~isinf(input_data.beta_den), 'beta_den must be finite');
-            assert(length(input_data.r_num) == w, 'r_num must be length %d', w);
-            assert(length(input_data.r_den) == w, 'r_den must be length %d', w);
+            assert(length(input_data.f_num) == w, 'f_num must be length %d', w);
+            assert(length(input_data.f_den) == w, 'f_den must be length %d', w);
 
             % If linear fractional - cost terms must all be zero/empty 
             error_txt = 'Cost inputs must be zero or empty for fractional problem';
 
 
-            assert(~isfield(input_data, 'Q0') || isempty(input_data.Q0),...
+            assert(~isfield(input_data, 'p0') || isempty(input_data.p0),...
                                                                      error_txt);
             assert(~isfield(input_data, 'c0') || isempty(input_data.c0),...
                                                                      error_txt);
             assert(~isfield(input_data, 'M0') || isempty(input_data.M0),...
                                                                      error_txt);
-            assert(~isfield(input_data, 'r0') || isempty(input_data.r0),...
+            assert(~isfield(input_data, 'f0') || isempty(input_data.f0),...
                                                                      error_txt);
             assert(~isfield(input_data, 'beta0') || isempty(input_data.beta0),...
                                                                      error_txt);
@@ -693,7 +692,8 @@ methods (Access = private)
 
             p0 = @(~, ~) p0_empty;
             c0 = c0_empty;
-            f0 = r_empty;
+            f0 = f0_empty;
+            M0 = @(~, ~) M0_empty;
             beta0 = 0;
 
         else 
@@ -704,74 +704,26 @@ methods (Access = private)
             assert(isfield(input_data, 'f0'), 'Missing f0');
             assert(isfield(input_data, 'beta0'), 'Missing beta0');
 
-            % TODO -- SOC/quadratic constraints 
-
-            p0 = input_data.p0;
-            c0 = input_data.c0; 
-            f0 = input_data.f0;
-            beta0 = input_data.beta0; 
-
-            %%
-            %
-            %        validate objective terms 
-            %
-            %
-            if ~isa(p0, 'function_handle'); p0 = @(~, ~) p0; end 
-            p0_test = p0(test_motor, test_gearbox);
-            if isa(c0, 'function_handle')
-                c0_test = c0(test_motor, test_gearbox);
-            else 
-                c0_test = c0; 
-            end 
-
-            if isa(f0, 'function_handle')
-                f0_test = f0(test_motor, test_gearbox);
-            else
-                f0_test = f0; 
-            end 
-
-            if isa(beta0, 'function_handle')
-                beta0_test = beta0(test_motor, test_gearbox);
-            else 
-                beta0_test = beta0; 
-            end 
-            % TODO -- if not empty need to validate all
-            % a little cumbersome but writing 'validate functions' could make this section of code much more managable
-            % the validate function would return an appropriately sized empty term if emtpy and the other valudation
-            % as neccearyy -- then would need nearly as much repeated code 
-            if isempty(p0_test)     
-                p0 = @(~, ~) p0_empty; 
-            end % else validate 
-            if isempty(c0_test)
-                c0 = c0_empty; 
-                c0_test = c0_empty;
-            end 
-
-            if isempty(f0_test)
-                f0 = f0_empty;
-                f0_test = f0_empty;
-            end 
-            if isempty(beta0)
-                beta0 = 0;
-            end
-
-
-            % TODO TODO TODO TODO -- fix validation and allow 
-            % for empty inputs as standings for zero matrices
-            % AND allow for column OR row vector specificiation 
-            % internally -- convert it to one consistent type 
-            %validate_c(c0_test, omega, n, 0);
-            %validate_r(f0_test, w, 0);   % TODO -- rename or somethin 
-
-
+            p0 = validate_p0(input_data.p0, n, test_motor, test_gearbox);
+            c0 = validate_c0(input_data.c0, omega, test_motor, test_gearbox); 
+            f0 = validate_f0(input_data.f0, w, test_motor, test_gearbox); 
+            beta0 = validate_beta0(input_data.beta0, m, test_motor, test_gearbox); 
+            M0 = validate_M0(input_data.M0, w, test_motor, test_gearbox); 
         end 
 
 
         % Get dummy motor and dummy gearbox for input validation 
 
-
-
-
+        %
+        %
+        %           Validate Quadratic/SOCP Constraints on x 
+        %
+        %
+        if isfield(input_data, 'quadcon')   % AND NOT EMPTY 
+            quadcon = validate_quadcon(input_data.quadcon, w); 
+        else 
+            quadcon = struct([]); % empty struct with zero elements 
+        end 
 
         % Optional Inputs G, h, G_ineq, h_ineq
         % and Gx + h = 0
@@ -787,18 +739,11 @@ methods (Access = private)
             h = input_data.h; 
         end 
 
-
-
         % Direct bounds on x-variable 
         x_lb = -inf(w, 1);
         if isfield(input_data, 'x_lb'); x_lb = input_data.x_lb; end 
         x_ub = inf(w, 1); 
         if isfield(input_data, 'x_ub'); x_ub = input_data.x_ub; end 
-
-
-        % NOTE -- if its faster to have NO depedndeance on inpuits
-        % might check sensitity and then use null
-        % inputs to speed up alot 
 
         % Check that others are the right size too
         if ~isa(G, 'function_handle');  G = @(motor, gearbox) G;      end 
@@ -806,7 +751,6 @@ methods (Access = private)
         if ~isa(x_ub, 'function_handle');  x_ub = @(motor, gearbox) x_ub(:); end 
         if ~isa(x_lb, 'function_handle');  x_lb = @(motor, gearbox) x_lb(:); end 
 
-        
 
         % Validate Remainin Inputs (G, h, G_ineq, h_ineq, x_lb, x_ub)
         G_test = G(test_motor, test_gearbox); 
@@ -837,112 +781,6 @@ methods (Access = private)
             omega_dot = zeros(n, 1); % treat as zero
         end 
 
-
-
-        %{
-        for j = 1:m  % TODO -- dont force to be function handle (like r and c)
-            % Check if input is function handle, if not make it so 
-            % NOTE: may want to change these too 
-            if ~isa(Q{j}, 'function_handle'); Q{j} = @(~, ~) Q{j}; end 
-            if ~isa(M{j}, 'function_handle'); M{j} = @(~, ~) M{j}; end 
-        end 
-        %} 
-
-        % when f_j is encoding linear inequality -- its more  
-        % efficient to explicitly encode these as linear constrainrts
-        % intead of SOC constraints with empty matrices 
-        % We will convert Q to vectors containing the diagonal 
-
-
-
-        % Letting c,r,beta be fixed instead of function handles can 
-        % greatly speed up code 
-        %for j = 1:m + 1   % NOTE: swticehd for seperate -- need to still validate objective though 
-
-
-        % TODO -- remove lin ineq 
-        lin_ineq = zeros(m, 1);   % Indicator (1 = linear)
-
-
-
-        % TODO -- add quadcon validation 
-
-        % TODO -- add validatatino that P \in R_{+}^{n x m}
-
-        %{
-        for j = 1:m 
-
-            Qj = Q{j}(test_motor, test_gearbox); % to test validity 
-            Mj = M{j}(test_motor, test_gearbox); % to test validity 
-
-            if isa(c{j}, 'function_handle')
-                cj = c{j}(test_motor, test_gearbox);
-            else
-                if isempty(c{j})
-                    c{j} = c_empty;
-                end  
-                cj = c{j};
-            end 
-
-            if isa(r{j}, 'function_handle')
-                rj = r{j}(test_motor, test_gearbox);
-            else
-                if isempty(r{j})
-                    r{j} = r_empty;
-                end 
-                rj = r{j};
-            end 
-
-            if isempty(Qj); Q{j} = @(~, ~) Q_empty; Qj = Q_empty; end  % fill in with vector 
-            if isempty(Mj); M{j} = @(~, ~) M_empty; Mj = M_empty; end  % fill in with empty sparse 
-
-
-            assert(issparse(Mj) || isempty(Mj),...
-                             'update_problem: M matrices must be sparse');
-            assert(issymmetric(Mj), 'update_problem: M matrices must be symmetric');
-            assert(size(Mj, 1) == w || isempty(Mj), 'size of T or M%d incorrect', j-1);
-
-            validate_c(cj, omega, n, j)
-            validate_r(rj, w, j);
-
-            % TODO -- size check on Q
-            % NOTE: is there a cleaner code way to verify size 
-            assert(isempty(Qj) || ((size(Qj, 1) == n) && (size(Qj, 2) == 1)) ||...
-                         (issparse(Qj) && isdiag(Qj)) ,...
-                     ['update_problem: Q matrices must be sparse diagonal '...
-                     'matrix or non-sparse N x 1 vector specify diagonal elements ']);
-
-            % Convert All Qs to vectors of diagonal - more efficient 
-            if size(Qj, 2) > 1 % if not col vector 
-                % We should either force the user to specify as a dense 
-                % col vector specifying diagonal or at least issue a warning
-                warning(['Specifying Q as a matrix instead of a vector ',...
-                                    'containing the diagonal can be slow']); 
-                Qj = full(diag(Q{j}(test_motor, test_gearbox)));  % This is very slow 
-                % Now always returns a vcetor 
-                % NOTE: may note need "FULL"
-                Q{j} = @(motor, gearbox) full(diag(Q{j}(motor, gearbox)));
-            end 
-
-            % TODO -- clean up or at least group some of the Q business 
-            assert(min(Qj) >= 0,...
-                   'Diagonal entries of Q matrices must be non-negative');
-
-            %if (nnz(Mj) == 0) && (j > 1)  % because using linear on Q   
-            if (nnz(Mj) == 0)  % because using linear on Q  -- because split up objective/constraints
-                %lin_ineq(j - 1) = 1; 
-                lin_ineq(j) = 1; 
-            end
-
-            if nnz(Mj) > 0
-                validate_soc(Mj); 
-            end 
-        end 
-        %} 
-
-       
-
-
         %
         %
         %    Now all inputs validated  :) 
@@ -951,15 +789,17 @@ methods (Access = private)
         if strcmp(problem_type, 'fractional')
             problem_data.cost_ub = input_data.cost_ub;
             problem_data.cost_lb = input_data.cost_lb;
-            problem_data.r_num = input_data.r_num;
-            problem_data.r_den = input_data.r_den; 
+            problem_data.f_num = input_data.f_num;
+            problem_data.f_den = input_data.f_den; 
             problem_data.beta_num = input_data.beta_num;
             problem_data.beta_den = input_data.beta_den; 
         end 
 
+        % Cost Vars 
         problem_data.p0 = p0;
         problem_data.f0 = f0;
         problem_data.c0 = c0; 
+        problem_data.M0 = M0; 
         problem_data.beta0 = beta0; 
 
         problem_data.T = T; 
@@ -967,10 +807,9 @@ methods (Access = private)
         problem_data.omega = omega;
         problem_data.omega_dot = omega_dot; 
 
-        % TODO -- quadratic constraints in here somehow (add later)
 
-        problem_data.P = P;   % etc 
-        problem_data.C = C;         % TODO
+        problem_data.P = P;   
+        problem_data.C = C;      
         problem_data.F = F; 
         problem_data.beta = bet; 
 
@@ -980,27 +819,20 @@ methods (Access = private)
 
         problem_data.x_lb = x_lb; 
         problem_data.x_ub = x_ub; 
-
-
-        problem_data.zero_vel_idxs = find(omega == 0); 
-        
-        problem_data.lin_ineq = lin_ineq; % Dont need anymore? all technically linear in x, I, I_sq
         
         problem_data.I_max = I_max; 
         problem_data.V_max = V_max;
 
-        % add problem_data.objective for parsing and assigning outputs???? 
-        % not a bad idea....
+        problem_data.zero_vel_idxs = find(omega == 0); 
+
 
         % update relevant dimensions 
         problem_data.n = n;
         problem_data.w = w;
         problem_data.m = m;
-
-        %problem_data.p = p; 
         problem_data.num_eq = num_eq; 
 
-        problem_data.num_quadcon = 0;   % TODO -- incorporate these 
+        problem_data.quadcon = quadcon;
 
     end % end validate problem data 
 
@@ -1384,8 +1216,6 @@ methods (Access = private)
         %    matrices = presolve(matrices, false(length(matrices.lb), 1));
         %end
 
-        % TODO -- put cutoffs back in  -- debugging like this 
-        % because code needs to work without cutoffs 
         [y_sol, combo_cost] = obj.socp_solve(matrices, cutoff);
 
         [sol, bad_idxs, directions] = obj.parse_solution(y_sol,...
@@ -1398,13 +1228,20 @@ methods (Access = private)
         if ~isempty(bad_idxs)  % need to run next solve 
             init_cost = combo_cost; 
             [y_sol, combo_cost] = obj.clean_solution(y_sol, combo_cost, index_map,...
-                                            matrices, comp_torques, motor, gearbox);
+                                    matrices, comp_torques, motor, gearbox);
+            % set clean_flag = true in calling parse solution 
             [sol, bad_idxs_clean, directions] = obj.parse_solution(y_sol,...
-                                     index_map, comp_torques,  motor, gearbox); 
+                                     index_map, comp_torques,  motor, gearbox, true); 
             exitflag = 1; 
             
             if ~isempty(bad_idxs_clean) || isnan(y_sol(1))
-                obj.mixed_int_solve(matrices, index_map.del, cutoff);
+
+ 
+
+                [y_sol, combo_cost, result] = obj.mixed_int_solve(matrices, index_map.del, cutoff);
+                [sol, bad_idxs_clean, directions] = obj.parse_solution(y_sol,...
+                                     index_map, comp_torques,  motor, gearbox, true); 
+                
                 exitflag = 2; 
             end
 
@@ -1469,9 +1306,6 @@ methods (Access = private)
         h = pd.h(motor, gearbox);
 
 
-         % TODO -- remove confusion between A/b in solving socp and H/b in problem setuo
-         % probablyt keep A/b and rename the 'b' in the problem setup context 
-
         T = pd.T(motor, gearbox);
         tau_c = pd.tau_c(motor, gearbox); 
 
@@ -1482,8 +1316,7 @@ methods (Access = private)
         n = pd.n; 
         w = pd.w;
         m = pd.m; 
-
-        num_eq = pd.num_eq;  % TODO -- maybe consdier a new nameing conventino 
+        num_eq = pd.num_eq;  
 
         zero_vel_idxs = pd.zero_vel_idxs; 
         nzvi = length(zero_vel_idxs); 
@@ -1502,7 +1335,6 @@ methods (Access = private)
         tau_motor_inertia = motor.inertia * ratio * omega_dot; 
         
   		% Dynamic Motor Friction and Inertia Compensation  (f - fric, j- inerits )
-        % TODO -- rename this guy and move into frictino model function
         % and have it be returned by that 
 
         bo = 1e-3; % bound offset for upper bounds to make it more clear 
@@ -1544,12 +1376,12 @@ methods (Access = private)
             index_map.mu = mu_idxs; 
             index_map.s = s_idxs; 
 
+            standard_idxs = find(Ico >= 0); % useful to havea  list of the other idxs too 
         	if min(Ico) >= 0
             	dim_y = s_idxs(end) + nzvi;  % total dimension of opt vector 
         		lb = -inf(dim_y, 1);		
         		ub = inf(dim_y, 1); 
         	else 
-        		% TODO -- ONLY ADD WHERE NEEDED TO REDUCE PROBLEM
         		% SIZE AND REDUNDANT CONSTRAINTS 
                 binary_aug = true;  % Add more variables 
 
@@ -1657,7 +1489,7 @@ methods (Access = private)
 
                 % ONLY DO AT INDICES WHERE ITS NEEDED 
                 so_aug = so(aug_idxs); 
-                gm_aug_idxs = gm_idxs(aug_idxs);  % USEFUL ABOVE TODO 
+                gm_aug_idxs = gm_idxs(aug_idxs);  % USEFUL ABOVE
                 mu_aug_idxs = mu_idxs(aug_idxs); 
 
                 % f(x) = -sign(omega)(I - I_comp)
@@ -1668,8 +1500,7 @@ methods (Access = private)
                 f_max = I_u_aug + so_aug.*I_comp_aug + 0.1;
                 f_min = I_l_aug + so_aug.*I_comp_aug - 0.1;
 
-                A_del = zeros(2*num_aug, dim_y);
-                
+                A_del = sparse([], [], [], 2*num_aug, dim_y, 4*num_aug);
                 A_del(1:num_aug, I_idxs(aug_idxs)) = -diag(so_aug);
                 A_del(1:num_aug, del_idxs) = diag(f_max);
 
@@ -1679,19 +1510,14 @@ methods (Access = private)
                 b_del = [f_max - I_comp_aug.*so_aug; so_aug.*I_comp_aug - epss];
 
 				% gm \equiv to delta*(I - I_comp)
-                %tmp_max = I_u_aug - I_comp_aug + 0.1;
-                %tmp_min = I_l_aug - I_comp_aug - 0.1;     
-
-
                 tmp_max = I_u_aug - I_comp_aug + 0.1;
                 tmp_min = I_l_aug - I_comp_aug - 0.1;     
 
-                %A_del_gm = zeros(4*num_aug, dim_y);
                 %
                 %   comment on the paper 
                 %
                 %
-                A_del_gm = zeros(2*num_aug, dim_y);
+                A_del_gm = sparse([], [], [], 2*num_aug, dim_y, 6*num_aug);
 
                 A_del_gm(1:num_aug, gm_aug_idxs) = eye(num_aug);
                 A_del_gm(1:num_aug, del_idxs) = -diag(tmp_min);
@@ -1700,11 +1526,9 @@ methods (Access = private)
                 A_del_gm(num_aug + (1:num_aug), gm_aug_idxs) = -eye(num_aug);
                 A_del_gm(num_aug + (1:num_aug), del_idxs) = diag(tmp_max);
                 A_del_gm(num_aug + (1:num_aug), I_idxs(aug_idxs)) = eye(num_aug);
-
                 %{
                 A_del_gm(2*num_aug + (1:num_aug), gm_aug_idxs) = eye(num_aug);
                 A_del_gm(2*num_aug + (1:num_aug), del_idxs) = -diag(tmp_max);
-
                 A_del_gm(3*num_aug + (1:num_aug), gm_aug_idxs) = -eye(num_aug);
                 A_del_gm(3*num_aug + (1:num_aug), del_idxs) = diag(tmp_min);
 
@@ -1713,14 +1537,7 @@ methods (Access = private)
 			    %}
                 b_del_gm = [-I_comp_aug - tmp_min; I_comp_aug + tmp_max];
 
-                %A_del = [];
-                %b_del = [];
-                %A_del_gm = [];
-                %b_del_gm = [];
-
-
-
-                % TODO SPEED UP             
+                % Combine          
 				A_ineq_other = [A_del; A_del_gm];
 				b_ineq_other = [b_del; b_del_gm];
 
@@ -1728,19 +1545,18 @@ methods (Access = private)
                 %
                 %        delta + sigma = 1 
                 %
-                A_del_sig = zeros(num_aug, dim_y);
-                A_del_sig(:, del_idxs) = eye(num_aug);
-                A_del_sig(:, sig_idxs) = eye(num_aug);
-                b_del_sig = ones(num_aug, 1);
+                A_del_sig = sparse([1:num_aug, 1:num_aug], [del_idxs, sig_idxs],...
+                                                 ones(1, 2*num_aug), num_aug, dim_y); 
+                b_del_sig = ones(num_aug, 1);                
 
             
                 %
                 %        gm_sq + mu_sq = s 
                 %
-                A_gmmu_sq = zeros(num_aug, dim_y);
-                A_gmmu_sq(:, gmsq_idxs) = eye(num_aug);
-                A_gmmu_sq(:, musq_idxs) = eye(num_aug);
-                A_gmmu_sq(:, s_idxs(aug_idxs)) = -eye(num_aug);
+                A_gmmu_sq = sparse([1:num_aug, 1:num_aug, 1:num_aug],...
+                                    [gmsq_idxs, musq_idxs, s_idxs(aug_idxs)],...
+                                    [ones(1, 2*num_aug), -ones(1, num_aug)],...
+                                    num_aug, dim_y);
                 b_gmmu_sq = zeros(num_aug, 1);
 
 
@@ -1822,129 +1638,41 @@ methods (Access = private)
             b_eq_G = [];
         end
 
-        % very slow 
+        % very slow -- if switch all to sparse may be faster 
         A_eq = [A_eq_tau_x; A_eq_other; A_eq_G]; 
         b_eq = [b_eq_tau_x; b_eq_other; b_eq_G]; % NOTE signs 
 
-        % there is some processing to do here for if 
-        % general constraints are SOCP OR QCP or simple inequality 
-        % Dont want to need to redo analyis 
-
-        % COULD define a seperate general inequality 
-        % for when all quadratic terms are empty
-        % fill this up in preprocessing and then this step
-        % becomes easier 
-
-        %{
-        num_lin_ineq = nnz(pd.lin_ineq);
-        if num_lin_ineq > 0 
-            A_ineq_extra = zeros(num_lin_ineq, dim_y);
-            b_ineq_extra = zeros(num_lin_ineq, 1); 
-            idxs = find(pd.lin_ineq); 
-        else 
-            A_ineq_extra = []; 
-            b_ineq_extra = [];
-        end 
-        %} 
 
         % With new approach -- m linear inequalities 
         % rename to A_ineq_main 
-        A_ineq_main =  zeros(m, dim_y);
-        A_ineq_main(:, Isq_idxs) = pd.P(motor, gearbox);
-        A_ineq_main(:, I_idxs) = pd.C(motor, gearbox); 
-        A_ineq_main(:, x_idxs) = pd.F(motor, gearbox); 
-        b_ineq_main = -pd.beta; % TODO -- double check 
+        P = pd.P(motor, gearbox);
+        C = pd.C(motor, gearbox); 
+        F = pd.F(motor, gearbox); 
+
+        A_ineq_main =  sparse([], [], [], m, dim_y, nnz(P) + nnz(C) + nnz(F));
+        A_ineq_main(:, Isq_idxs) = P;
+        A_ineq_main(:, I_idxs) = C;
+        A_ineq_main(:, x_idxs) = F;
+        b_ineq_main = -pd.beta(motor, gearbox); 
 
         
         quadcon = struct([]); % struct for quadratic/SOC constraints 
-        qc_idx = 0; 
+        qc_idx = 0;
 
-        %{
-      	%
-      	%		Incorporate Ineqaulity Constraints 
-        %		Specified with Q, r, M, c, beta 
-        %
-        %qc_idx = 0;   % n
-        qc_idx = numel(quadcon);
-
-        lin_ineq_idx = 0; % will increment 
-
-        Q = pd.Q; 
-        % conveninet but actually slower than writing loop 
-        %Q_tmp = cellfun(@(x) x(motor, gearbox), Q, 'UniformOutput', false); 
-
-        for j = 1:m    % incorporate the quadratic constraints + other linear ineqs 
-            %cj = pd.c{j + 1};  % +1 bc 1 indexing 
-            cj = pd.c{j};  % +1 bc 1 indexing 
-
-            if isa(cj, 'function_handle')
-                c_tmp = cj(motor, gearbox); % slow 
-            else 
-                c_tmp = cj;
-            end 
-
-            %rj = pd.r{j + 1};   % WHY SO SLOW ? - NOT EMPTY       
-            rj = pd.r{j};   % WHY SO SLOW ? - NOT EMPTY             
-
-            if isa(rj, 'function_handle')
-                r_tmp = rj(motor, gearbox); % slow 
-            else 
-                r_tmp = rj; 
-            end 
-            
-            %bet = pd.beta{j + 1}; 
-            bet = pd.beta{j}; 
-
-            if isa(bet, 'function_handle')
-                beta_tmp = bet(motor, gearbox); % slow 
-            else 
-                beta_tmp = bet; 
-            end 
-
-            q_tmp = zeros(dim_y, 1); 
-            q_tmp(I_idxs) = c_tmp; 
-            %q_tmp(Isq_idxs) =  pd.Q{j + 1}(motor, gearbox); 
-            q_tmp(Isq_idxs) =  Q{j}(motor, gearbox);  % slow
-            %q_tmp(Isq_idxs) =  Q_tmp{j};  % slow
-
-
-            q_tmp(x_idxs) = r_tmp; 
-
-            if pd.lin_ineq(j)  % if linear 
-                lin_ineq_idx = lin_ineq_idx + 1; 
-                A_ineq_extra(lin_ineq_idx, :) = q_tmp'; 
-                b_ineq_extra(lin_ineq_idx) = -beta_tmp;
-            else  % quad constraints 
-                qc_idx = qc_idx + 1; 
-
-                %Mj_tmp = pd.M{j + 1}(motor, gearbox); 
-                Mj_tmp = pd.M{j}(motor, gearbox); 
-
-
-                num_vals = nnz(Mj_tmp); 
-                
-                % NOTE -- could speed these up 
-                Qc_tmp = sparse([], [], [], dim_y, dim_y, num_vals, nnz(Mj_tmp));
-                Qc_tmp(x_idxs, x_idxs) = Mj_tmp; 
-
-                quadcon(qc_idx).Qc = Qc_tmp; 
-                quadcon(qc_idx).q = q_tmp; 
-                quadcon(qc_idx).sense = '<'; 
-                quadcon(qc_idx).rhs = -beta_tmp; 
-            end 
-
-        end 
-        %} 
-       
-        % TODO -- initial correct size of quadon 
-        % TODO -- move this up and group all the if eta < 1 code 
-	    qc_idx = numel(quadcon);
         if eta < 1 
         	%
         	% 			Add Quadratic Constraits 
         	%				(gamma - mu)^2 <= s
+            %
+            %       9/29/20 Only doing this on indices 
+            %       without binary augmentation because
+            %       otherwise redundant
+	        %for i = 1:n 
+            qzero = zeros(dim_y, 1);
+            for j = 1:length(standard_idxs)
+                i = standard_idxs(j); 
 
-	        for i = 1:n 
+
 		        qc_idx = qc_idx + 1; 
 
 		        row = [gm_idxs(i); gm_idxs(i); mu_idxs(i); mu_idxs(i)];
@@ -1954,15 +1682,22 @@ methods (Access = private)
 		        % gm^2 - 2 gm*mu + mu_^2 
                 % there are SO MANY function calls to this but probs
                 % no real way to make faster 
-	            Qc_tmp = sparse(row, col, vals, dim_y, dim_y); 
-		        q_tmp = zeros(dim_y, 1);
+                % NOTE: Could make faster by using Qrow, Qcol, Qval
+                % comvention -- wont speed things up for ecos 
+                % but wont slow down either 
+		        q_tmp = qzero;
 		        q_tmp(s_idxs(i)) = -1; 
 
-		        quadcon(qc_idx).Qc = Qc_tmp; 
-	            quadcon(qc_idx).q = q_tmp; 
+                %Qc_tmp = sparse(row, col, vals, dim_y, dim_y); 
+		        %quadcon(qc_idx).Qc = Qc_tmp; 
+                quadcon(qc_idx).Qrow = row;
+                quadcon(qc_idx).Qcol = col; 
+                quadcon(qc_idx).Qval = vals; 
+                quadcon(qc_idx).q = q_tmp; 
 	            quadcon(qc_idx).sense = '<'; 
 	            quadcon(qc_idx).rhs = 0; 
 	        end 
+
 
 	        %... its possible dont need both of these 
 	        %
@@ -1974,7 +1709,9 @@ methods (Access = private)
             %   NOTE: not clear that we need this, may be fine without??
             % This may actually be detrimental? Lets try with crazier accels   
             if binary_aug  % These can help -- without this get stuck in a recusion
-            % when trying to clean solutions                         
+            % when trying to clean solutions 
+                qzero_sp = sparse(dim_y, 1); 
+
                 for i = 1:num_aug 
 
 	        		% gm^2 <= gm_sq .*delta 
@@ -1982,9 +1719,12 @@ methods (Access = private)
                     row = [gm_aug_idxs(i); gmsq_idxs(i); del_idxs(i)];
                     col = [gm_aug_idxs(i); del_idxs(i); gmsq_idxs(i)];
                     vals = [1; -0.5; -0.5]; 
-                    Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
-                    quadcon(qc_idx).Qc = Qc_tmp; 
-                    quadcon(qc_idx).q = zeros(dim_y, 1);
+                    %Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
+                    %quadcon(qc_idx).Qc = Qc_tmp; 
+                    quadcon(qc_idx).Qrow = row; 
+                    quadcon(qc_idx).Qcol = col; 
+                    quadcon(qc_idx).Qval = vals; 
+                    quadcon(qc_idx).q = qzero_sp;
                     quadcon(qc_idx).sense = '<'; 
                     quadcon(qc_idx).rhs = 0; 
 
@@ -1993,56 +1733,52 @@ methods (Access = private)
                     row = [mu_aug_idxs(i); musq_idxs(i); sig_idxs(i)];
                     col = [mu_aug_idxs(i); sig_idxs(i); musq_idxs(i)];
                     vals = [1; -0.5; -0.5]; 
-                    Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
-                    quadcon(qc_idx).Qc = Qc_tmp; 
-                    quadcon(qc_idx).q = zeros(dim_y, 1);
+                    %Qc_tmp = sparse(row, col, vals, dim_y, dim_y);
+                    %quadcon(qc_idx).Qc = Qc_tmp; 
+                    quadcon(qc_idx).Qrow = row; 
+                    quadcon(qc_idx).Qcol = col; 
+                    quadcon(qc_idx).Qval = vals; 
+                    quadcon(qc_idx).q = qzero;
                     quadcon(qc_idx).sense = '<'; 
                     quadcon(qc_idx).rhs = 0; 
 		        end 
 	        end
 
-        end 
-        %{
+
 	    else    % eta = 1 
-	    	%
-	    	%	Add quadratic constraint I^2 <= I_sq 
-	    	%	
-	    	for i = 1:n 
-		        qc_idx = qc_idx + 1; 
+            %
+            %   Add quadratic constraint I^2 <= I_sq 
+            %   
+            %   unclear if still needed. 
+            %
+            qzero = zeros(dim_y, 1);
 
-	            Qc_tmp = sparse(I_idxs(i), I_idxs(i), 1, dim_y, dim_y); 
-		        q_tmp = zeros(dim_y, 1);
-		        q_tmp(Isq_idxs(i)) = -1; 
+            for i = 1:n 
+                qc_idx = qc_idx + 1; 
 
-		        quadcon(qc_idx).Qc = Qc_tmp; 
-	            quadcon(qc_idx).q = q_tmp; 
-	            quadcon(qc_idx).sense = '<'; 
-	            quadcon(qc_idx).rhs = 0; 
-	        end 
+                q_tmp = qzero; 
+                q_tmp(Isq_idxs(i)) = -1; 
+
+                %Qc_tmp = sparse(I_idxs(i), I_idxs(i), 1, dim_y, dim_y); 
+                %quadcon(qc_idx).Qc = Qc_tmp; 
+                quadcon(qc_idx).Qrow = I_idxs(i); 
+                quadcon(qc_idx).Qcol = I_idxs(i); 
+                quadcon(qc_idx).Qval = 1; 
+
+                quadcon(qc_idx).q = q_tmp; 
+                quadcon(qc_idx).sense = '<'; 
+                quadcon(qc_idx).rhs = 0; 
+            end
 	    end 
-        %} 
-        %9/14/20 -- add regarcelss 
-        for i = 1:n 
-            qc_idx = qc_idx + 1; 
-
-            Qc_tmp = sparse(I_idxs(i), I_idxs(i), 1, dim_y, dim_y); 
-            q_tmp = zeros(dim_y, 1);
-            q_tmp(Isq_idxs(i)) = -1; 
-
-            quadcon(qc_idx).Qc = Qc_tmp; 
-            quadcon(qc_idx).q = q_tmp; 
-            quadcon(qc_idx).sense = '<'; 
-            quadcon(qc_idx).rhs = 0; 
-        end
-
+ 
 
         if strcmp(obj.problem_type, 'fractional')
             % Augment H with equality 
             A_lin_frac = zeros(2, dim_y); 
-            A_lin_frac(1, x_idxs) = pd.r_num - bound*pd.r_den;
+            A_lin_frac(1, x_idxs) = pd.f_num - bound*pd.f_den;
             
             % Constrain denominator to be positive  
-            A_lin_frac(2, x_idxs) = -pd.r_den; % nonnegativitiy 
+            A_lin_frac(2, x_idxs) = -pd.f_den; % nonnegativitiy 
             b_lin_frac = [bound*pd.beta_den - pd.beta_num; pd.beta_den];
         
         elseif strcmp(obj.problem_type, 'standard')
@@ -2052,39 +1788,55 @@ methods (Access = private)
             error('Invalid Problem type ');
         end 
 
-        % Add the linear inequalities in G_ineq, h_ineq
-        %{
-        % Removed for faster implementation 
-        if ~isempty(G_ineq)
-        	% Add these to A_ineq other 
-        	A_ineq_G = sparse([], [], [], size(G_ineq, 1), dim_y, nnz(G_ineq));
-        	A_ineq_G(:, x_idxs) = G_ineq; 
-        	b_ineq_G = h_ineq; 
 
-        	A_ineq_extra = [A_ineq_extra; A_ineq_G];
-        	b_ineq_extra = [b_ineq_extra;  -b_ineq_G]; % NOTE signs 
-        end  
-        %}
+        %% 
+        %
+        %       Add in additional Quadratic OR SOC constraints from 
+        %       pd.quadcon (that were specified in update_problem)
+        %
+        if isa(pd.quadcon, 'function_handle')
+            extra_quadcon = pd.quadcon(motor, gearbox)
+        else
+            extra_quadcon = pd.quadcon;
+        end 
+
+        num_qc = numel(extra_quadcon);
+        q_pad = sparse(n, 1); 
+        for i = 1:num_qc
+            qc_idx = qc_idx + 1; 
+
+            qc_tmp = extra_quadcon(i);
+
+            if isfield(qc_tmp, 'Qrow')
+                Qrow = qc_tmp.Qrow;
+                Qcol = qc_tmp.Qcol;
+                Qval = qc_tmp.Qval; 
+            else 
+                [Qrow, Qcol, Qval] = find(qc_tmp.Qc);
+            end 
+
+            quadcon(qc_idx).Qrow = Qrow + n; 
+            quadcon(qc_idx).Qcol = Qcol + n; 
+            quadcon(qc_idx).Qval = Qval; 
+            quadcon(qc_idx).q = [q_pad; qc_tmp.q(:)]
+            quadcon(qc_idx).sense = '<';
+            quadcon(qc_idx).rhs = qc_tmp.rhs; 
+        end 
+
 
         %% ----- Incorporate Actual Cost --------------
-
-        if ~isempty(x_idxs)   % meaning fixed torque 
-            %[M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
-            % TODO -- incorporate the quadcons where quadratic costs 
-            % can actually come in 
-            % could have a seperate quadratic cost matrix specified in the cost though
-            % think about the cleanest way to do that 
-
-            %Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
-            %									 M0_val, dim_y, dim_y); 
-        
-            % TODO -- put options for quadratic constraints back in
-            % M0 is not actually a bad idea!!!! (then only the added complexitity )
-            % for quadratic constraints which is fine becaue M0 cant be SOC/RSOC anyway 
-            Q_cost = sparse(dim_y, dim_y); % EMPTY 
+        M0 = pd.M0(motor, gearbox);
+        if ~isempty(x_idxs) && (nnz(M0) > 0)  % meaning fixed torque 
+            [M0_row, M0_col, M0_val] = find(pd.M0(motor, gearbox)); 
+  
+            Q_cost = sparse(x_idxs(1) + M0_row - 1, x_idxs(1) + M0_col - 1,...
+            									 M0_val, dim_y, dim_y); 
         else 
             Q_cost = sparse(dim_y, dim_y); 
         end  
+
+        p0 = pd.p0(motor, gearbox); % diag vector -- NOTE: should we do the function handle test here too?         
+
 
         f0_tmp = pd.f0; 
         if isa(f0_tmp, 'function_handle')
@@ -2099,14 +1851,10 @@ methods (Access = private)
         else 
             beta0 = beta0_tmp;
         end 
-        
-        %Q0 = pd.Q{1}(motor, gearbox); % diag vector 
-        %c0_tmp = pd.c{1};
-        p0 = pd.p0(motor, gearbox); % diag vector -- NOTE: should we do the function handle test here too? 
-        
+                
         c0_tmp = pd.c0;
-        if isa(c0_tmp, 'function_handle')
-            c0 = c0_tmp(motor, gearbox)
+        if isa(c0_tmp, 'function_handle')     % NOTE: can now simplify because always func handle
+            c0 = c0_tmp(motor, gearbox); 
         else 
             c0 = c0_tmp;
         end 
@@ -2136,11 +1884,6 @@ methods (Access = private)
     	matrices.beta0 = beta0;
     	matrices.A_eq = A_eq;
     	matrices.b_eq = b_eq; 
-    	%matrices.A_ineq = [A_ineq_other; A_ineq_extra; A_lin_frac];
-    	%matrices.b_ineq = [b_ineq_other; b_ineq_extra; b_lin_frac];
-
-        % below could be faster -- probably my kaing A_ineq_main sparse in the first place 
-        % and then concatenationg sparse matrices -- 
         matrices.A_ineq = [A_ineq_main; A_ineq_other; A_lin_frac];   
         matrices.b_ineq = [b_ineq_main; b_ineq_other; b_lin_frac];        
     	matrices.lb = lb; 
@@ -2160,7 +1903,7 @@ methods (Access = private)
 
 
     function  [sol, bad_bin_idxs, directions, tau_error] = parse_solution(obj, y_sol, index_map,...
-                                                comp_torques,  motor, gearbox)
+                                                comp_torques,  motor, gearbox, varargin)
     %
     %   Inputs:
     %
@@ -2180,6 +1923,11 @@ methods (Access = private)
             return; 
         end 
         
+        clean_flag = false; % this result from cleaning 
+        if ~isempty(varargin)
+            clean_flag = varargin{1};
+        end 
+
         omega = obj.problem_data.omega;
 
         % If Actual solution exists....
@@ -2249,11 +1997,15 @@ methods (Access = private)
         sol.tau_em = ratio*(tau_m.*(eta*driving + driven/eta + zero_vel)); 
         sol.driving = driving; 
 
+        % NOTE: may decide to check on all indices
+        if eta < 1
+            min_gmmu_all = min(abs(gm), abs(mu));
+        else 
+            min_gmmu_all = 0; % no decomp
+        end 
 
         if isfield(index_map, 'binary')
-            % NOTE: may decide to check on all indices
-            min_gmmu_all = min(abs(gm), abs(mu));
-   
+
             % Only pick out the indices we care about 
             gm_bin = gm(index_map.binary);
             mu_bin = mu(index_map.binary); 
@@ -2282,6 +2034,12 @@ methods (Access = private)
             tau_error = tau_error(reindex);
         end 
 
+        % a sanity check to be commented out 
+
+        if (max(min_gmmu_all) > obj.tolerances.gmmu_tol) && clean_flag 
+            disp('pppp')
+            keyboard
+        end 
         
 
     end % end parse_solution
@@ -2291,7 +2049,6 @@ methods (Access = private)
     function [new_sol, new_cost] = clean_solution(obj, y_sol, init_cost, index_map,...
                                                      matrices, comp_torques, motor, gearbox)
 
-        
         dim_y = length(y_sol);
         eta = gearbox.efficiency;
         ratio = gearbox.direction .* gearbox.ratio;
@@ -2340,7 +2097,12 @@ methods (Access = private)
         % issue on current at indices where the initial gm/mu decomposition 
         % was good enough in the first place 
 
-        fix_idxs = moving; 
+        % No point in fixing where not binary aug?? 
+        is_aug_idx = false(obj.problem_data.n, 1); 
+        is_aug_idx(index_map.binary) = true; 
+
+        %fix_idxs = moving; 
+        fix_idxs = and(moving, not(is_aug_idx)); % unclear if this helpful
 
         I_ub_bad = [I > matrices.ub(index_map.I) + obj.tolerances.feastol];  
         I_lb_bad = [I < matrices.lb(index_map.I) - obj.tolerances.feastol]; 
@@ -2349,21 +2111,14 @@ methods (Access = private)
         ignore = and(I_bad, gmmu_good); 
         fix_idxs = and(moving, not(ignore));
 
+
+
+
+
         %% 
         tmp_sol(index_map.I(fix_idxs)) = I(fix_idxs);
         tmp_sol(index_map.gm(fix_idxs)) = gm(fix_idxs);
         tmp_sol(index_map.tau(fix_idxs)) = tau(fix_idxs); 
-        % 
-        %fix_idxs_shift = ismember(index_map.binary, find(fix_idxs));
-        %tmp_sol(index_map.del(fix_idxs_shift)) = del(fix_idxs_shift);       % shifted 
-
-        % removing redundancies helps numerical issues 
-        %tmp_sol(index_map.s(fix_idxs)) = s(fix_idxs); 
-        %tmp_sol(index_map.mu) = mu; 
-        %tmp_sol(index_map.sig) = sig;
-        %tmp_sol(index_map.Isq) = Isq;
-        %tmp_sol(index_map.musq) = musq; 
-        %tmp_sol(index_map.gmsq(fix_idxs_shift)) = gmsq(fix_idxs_shift);     % shifted
 
         not_nan_idxs = find(~isnan(tmp_sol)); 
         clean_matrices = matrices; 
@@ -2381,95 +2136,19 @@ methods (Access = private)
         %clean_matrices.quadcon = struct([]);
 
 
-        % Want to fix all of the values we decided on above 
-
-        % Check for direct upper bound issues 
-
-
-        % TODO Something to consider is if x-vals are up against bounds....
-        % work through this and maybe try to construct an example where we run into this
-        % 
-        % by keeping torque the same dont need to worry about x vars that are 
-        % only coupled into torque 
-
-        %{
-
-        ub_bad_idxs = find(tmp_sol > matrices.ub + obj.tolerances.feastol);  
-        lb_bad_idxs = find(tmp_sol < matrices.lb - obj.tolerances.feastol); 
-
-        
-        if any(ub_bad_idxs) || any(lb_bad_idxs)
- 
-  
-            % alter this so 
-            for idx = [ub_bad_idxs', lb_bad_idxs'] 
-                display(idx)
-                if (idx <= index_map.I(end)) && (idx >= index_map.I(1))
-                    % issue is with bound on currents 
-                    if gm(idx) == 0
-                        clean_matrices.lb(index_map.gm(idx)) = 0;
-                        clean_matrices.ub(index_map.gm(idx)) = 0;
-                    else % mu(idx) == 0
-                        clean_matrices.lb(index_map.mu(idx)) = 0;
-                        clean_matrices.ub(index_map.mu(idx)) = 0;
-                    end 
-                elseif (idx <= index_map.tau(end)) && (idx >= index_map.tau(1))
-                    % issure with torques -- since the torques have been 
-                    % fixed in the above process 
-                    % this indicates a tolerancing error 
-                    disp('tolerancing error on tau')
-                else 
-                    disp('aaaa ---------------------- ')
-                end 
-            end 
-
-            % now should be cleanable without violating bounds however 
-            % may create new bad idxs 
-
-            % case or recusrion limtis 
-            disp('fiixxxxxxx')
-            [new_sol, new_cost, result] = obj.socp_solve(clean_matrices, inf);
-
-            
-            disp('about to make recursive clean')
-            keyboard
-
-            % NOTE: making the recursive call with initial matrices
-            [y_rec, rec_cost] = obj.clean_solution(new_sol, init_cost, index_map,...
-                                                 matrices, comp_torques, motor, gearbox); 
-
-
-            [sol_rec, bad_idxs_rec] = obj.parse_solution(y_rec, index_map,...
-                                                    comp_torques,  motor, gearbox);
-
-
-            disp('popped out of recusive call')
-
-            if isempty(bad_idxs_rec)
-                new_sol = y_rec; 
-                new_cost = rec_cost; 
-            else % wasnt able to figure out - return originals  
-                 disp('sad day for recursive functions everywhere')
-                new_sol = y_sol;
-                new_cost =  init_cost;
-            end 
-        else 
-        %} 
         ff = 1e-3; % fudge factor on specified bounds to help with numerics
         % Anything that was fixed to zero we want to keep numerically zero
         % for the rest we will loosen the bounds a little bit to help with numerical issues
         tmp_lb = max(matrices.lb, tmp_sol - [tmp_sol ~= 0]*ff);
         tmp_ub = min(matrices.ub, tmp_sol + [tmp_sol ~= 0]*ff);
 
-
         clean_matrices.lb(not_nan_idxs) = tmp_lb(not_nan_idxs);
         clean_matrices.ub(not_nan_idxs) = tmp_ub(not_nan_idxs);
 
+        [clean_sol, clean_cost, result] = obj.socp_solve(clean_matrices, inf);
 
-        [new_sol, new_cost, result] = obj.socp_solve(clean_matrices, inf);
-
-        cost_diff = new_cost - init_cost;
-        cost_diff_rel = cost_diff/min(abs([new_cost, init_cost]));
+        cost_diff = clean_cost - init_cost;
+        cost_diff_rel = cost_diff/min(abs([clean_cost, init_cost]));
 
         % TODO using 0.01 here calling this parameter a reltol might not 
         % be the most accurate -- should still be setable and 1% is fine 
@@ -2478,7 +2157,11 @@ methods (Access = private)
                                 (cost_diff_rel > obj.tolerances.reltol)
             new_sol = nan;
             new_cost = inf; 
-        end
+
+        else 
+            new_sol = clean_sol;
+            new_cost = clean_cost;
+        end 
          
     end 
 
@@ -2795,16 +2478,194 @@ end % end CLASSDEF
 %
 %       Input validation functions 
 %
-%{
-function Q = validate_Q()
+
+
+
+function quadcon = validate_quadcon(quadcon, w ,test_motor, test_gearbox)
+    
+
+
+    if isa(quadcon, 'function_handle')
+        test_quadcon = quadcon(test_motor, test_gearbox);
+    else 
+        if isempty(quadcon) || isempty(fieldnames(quadcon))
+            quadcon = struct([]);
+            return;
+        else 
+            test_quadcon = quadcon;
+        end
+    end 
+
+    % but as function of motor, gearbox? 
+
+    % let the whole thing be a function of motor gearbox
+
+    % so defined in seperate file 
+
+    num_qc = numel(test_quadcon); 
+
+    for i = 1:qc
+        qci = test_quadcon(i); 
+
+        assert(isfield(qci, 'q'), 'must specify q vector for all quadrtatic constraints');
+        assert(isfield(qci, 'rhs'), 'must specify rhs for all quadrtatic constraints');
+        
+        if isfield(qci, 'Qc')
+            Qc_tmp = qci.Qc;
+            assert(issparse(Qc_tmp), 'quadcon constraint matrices must be sparse'); 
+            [row, col, val] = find(Qc_tmp);  
+        else
+            assert(isfield(qci, 'Qrow'), 'Specify Qc OR Qrow, Qcol, Qval');
+            assert(isfield(qci, 'Qval'), 'Specify Qc OR Qrow, Qcol, Qval');
+            assert(isfield(qci, 'Qcol'), 'Specify Qc OR Qrow, Qcol, Qval');
+            row = qci.Qrow;
+            col = qci.Qcol;
+            val = qci.Qval;
+        end 
+
+        ctype = validate_soc(row, col, val);
+
+        if (ctype == 2) || (ctype == 3)
+            % in this case the linear and constant terms must be zero 
+            assert(~any(qci.qc), 'For SOC constraints need qc all zeros');
+            assert(~any(qci.rhs), 'For SOC constraints need rhs = 0');
+        end 
+    end 
+
 end 
 
-function M = validate_M()
+
+
+function p0 = validate_p0(p0, n, test_motor, test_gearbox)
+    if ~isa(p0, 'function_handle')
+        p0 = @(~, ~) p0(:);  % make col vec if not 
+    end
+
+    p0_test = p0(test_motor, test_gearbox);
+
+    if isempty(p0_test)
+        p0 = @(~, ~) zeros(n, 1); 
+        p0_test = zeros(n, 1);
+    end 
+    assert(length(p0_test) == n, 'incorrect length for p0');
 end 
 
-function M0 = validate_M0()
+
+
+
+function c0 = validate_c0(c0, omega, test_motor, test_gearbox)
+    if ~isa(c0, 'function_handle')
+        c0 = @(~, ~) c0(:);  % make col vec if not 
+    end
+    n = length(omega); 
+    c0_test = c0(test_motor, test_gearbox);
+
+    if isempty(c0_test)
+        c0 = @(~, ~) zeros(n, 1); 
+        c0_test = zeros(n, 1);
+    end
+
+    assert(length(c0_test) == n, 'incorrect length for c0');
+    % TODO -- more rigiourous would be to double check that this 
+    % has been done correctly for gearboxes of BOTH direction types 
+    % Could have forward test gearbox and a reverse test gearbox 
+    assert(min(test_gearbox.direction*c0_test(:).*omega(:)) >= 0, ['c0 needs to satisfy ',...
+            'c0_j.*(gearbox.direction*omega) >= 0']  ); 
+
+end  
+
+function f0 = validate_f0(f0, w, test_motor, test_gearbox)
+    if ~isa(f0, 'function_handle')
+        f0 = @(~, ~) f0(:);  % make col vec if not 
+    end
+
+    f0_test = f0(test_motor, test_gearbox);
+
+    if isempty(f0_test)
+        f0 = @(~, ~) zeros(w, 1); 
+        f0_test = zeros(w, 1);
+    end
+
+    % want as a col vec but will accept either 
+    assert(length(f0_test) == w, 'incorrect length for f0');
 end 
-%} 
+
+function beta0 = validate_beta0(beta0, m, test_motor, test_gearbox)
+    if ~isa(beta0, 'function_handle')
+        beta0 = @(~,~) beta0;
+    end 
+    beta0_test = beta0(test_motor, test_gearbox); 
+
+    if isempty(beta0_test)
+        beta0 = @(~,~) 0;
+        beta0_test = 0;
+    end 
+
+    assert(isscalar(beta0_test), 'beta0 must be a scalar'); 
+end 
+
+function M0 = validate_M0(M0, w, test_motor, test_gearbox)
+
+    if ~isa(M0, 'function_handle')
+        M0 = @(~,~) M0;
+    end 
+
+    M0_test = M0(test_motor, test_gearbox); 
+    if isempty(M0_test)
+        M0 = @(~,~) sparse(w, w); % empty 
+        M0_test = sparse(w, w);     
+    end 
+
+    assert(issymmetric(M0_test), 'M0 must be symmetric');
+    % check w rows (already checked symmetric )    
+    % TODO check PSD 
+end 
+
+function [P, P_test] = validate_P(P, n, test_motor, test_gearbox)
+    if ~isa(P, 'function_handle')
+        P = @(~, ~) P;
+    end
+
+    P_test = P(test_motor, test_gearbox); 
+    assert(size(P_test, 2) == n, 'Incorect number of cols in P');
+    assert(min(P_test(:)) >= 0, 'P must containt only non-negative values')
+end 
+
+function [C, C_test] = validate_C(C, omega, test_motor, test_gearbox)
+    if ~isa(C, 'function_handle')
+        C = @(~, ~) C;
+    end
+
+    C_test = C(test_motor, test_gearbox); 
+    n = length(omega); 
+    assert(size(C_test, 2) == n, 'Incorect number of cols in C');
+
+    for i = 1:size(C_test, 1) % check each row 
+        ci = C_test(i, :);
+        assert(min(test_gearbox.direction*ci(:).*omega(:)) >= 0, ['C needs to satisfy ',...
+            'C(:, i).*(gearbox.direction*omega) >= 0 in each row']); 
+    end 
+end 
+
+function [F, F_test] = validate_F(F, w, test_motor, test_gearbox)
+    if ~isa(F, 'function_handle')
+        F = @(~, ~) F;
+    end
+
+    F_test = F(test_motor, test_gearbox); 
+    assert(size(F_test, 2) == w, 'Incorect number of cols in F');
+
+end 
+
+function [bet] = validate_beta(bet, m, test_motor, test_gearbox)
+    if ~isa(bet, 'function_handle')
+        bet = @(~, ~) bet;
+    end
+    bet_test = bet(test_motor, test_gearbox); 
+    assert(length(bet_test) == m, 'Incorect size of beta');
+end 
+
+
 
 function dirs = find_dirs(tofind)
 % copied verbatim from https://www.mathworks.com/matlabcentral/answers/347892-get-full-path-of-directory-that-is-on-matlab-search-path
@@ -2858,7 +2719,50 @@ function is_valid = valid_objective(objective)
     is_valid = false; % TODO 
 end 
 
-function validate_soc(Mj)
+function ctype = validate_soc(rows, cols, vals)  % make this return the problem type 
+%
+%
+%   ctype = 1 -- standard quadratic 
+%   ctype = 2 -- standard SOC 
+%   ctype = 3 -- rotated SOC 
+    n_tmp = max([rows(:); cols(:)]);
+    Q = sparse(rows, cols, vals, n_tmp, n_tmp); % dont care about making size correct
+
+    ctype = 1; % flag for standard PSD constraint 
+    for i = 1:length(vals)
+        val = vals(i);
+        if val < 0
+            col = cols(i);
+            row = rows(i); 
+            if row == col
+                % negative value on the diagonal - standard soc
+                ctype = 2; 
+                neg_val = val;
+                neg_col = col;
+                neg_row = row;
+                break; 
+            elseif nnz(Q(row, :)) == 1 % singular row  
+                ctype = 3;
+                neg_val = val;
+                neg_col = col;
+                neg_row = row; 
+                break; 
+            end 
+        end 
+    end 
+
+    if ctype == 1 
+        % Compare to code in prep_socp 
+        % for simplicity we will just do an eigen decomp
+        % because this code only gets called at the start 
+    elseif ctype == 2
+        % TODO 
+    elseif ctype == 3 
+        % TODO 
+    end 
+
+
+    %{
     % TODO -- simplify 
     [row, col, val] = find(Mj)
     %unique_col = unique(col); 
@@ -2897,6 +2801,7 @@ function validate_soc(Mj)
             'Error. M_%d must have at most 1 negative',...
             'eigenvalue, has %d', j, num_neg_eig); 
     end 
+    %} 
 end 
 
 function def_settings = default_settings()
@@ -2910,7 +2815,7 @@ function def_tolerances = default_tolerances()
     def_tolerances = struct('rho', 1e-4,...
                             'gmmu_tol', 1e-3, ... % 1 ma 
                             'feastol', 1e-5,...    % 1e-5
-                            'reltol', 1e-2,... % 1 percent optimality
+                            'reltol', 2e-2,... % 2 percent optimality
                             'abstol', 1e-3,...  % if tighter, sometimes issues
                             'qcvx_reltol', 1e-3,...
                             'qcvx_abstol', 1e-7);
