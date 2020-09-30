@@ -1,7 +1,7 @@
 
 %
 %
-%       TODO 
+%       COMMENT ME A BUNCH 
 %
 %
 %
@@ -21,14 +21,8 @@ time = time(:);
 tau_des = tau_des(:); 
 n = length(time); 
 
-omega(omega == 0) = -1e-12;  % to help debug something 
-
-
 eta_drive = 0.95;       % efficiency of drive electronics when driving motor
 eta_regen = 0.80;       % efficiency of drive electronics in regeneration
-
-% NOTE: could do 2 trajectories 
-% Fill in all the problem data parts 
 
 % Define aux variable x and the indices into it 
 % x = [kp, tau_offset]
@@ -38,8 +32,6 @@ tau_offset_idx = 2;
 
 
 % Block comment at the begining of each of these would be good 
-
-
 x_lb = [-20; -20];   % providing reasonable bounds on inputs can help :)
 x_ub = [20; 20];
 
@@ -76,26 +68,25 @@ selection_filters.total_mass = 4; % only accept combinations lighter than 4 kg
 
 % Solve the problem 
 settings.solver = 'gurobi';     % set the solver to gurobi (the default)
-% instantiate new motor selection problem and build a new database 
-prob = cords('settings', settings, 'reuse_db', false); 
+% instantiate new motor selection problem and build a new database
+display('change reuse back to false')
+
+prob = cords('settings', settings, 'reuse_db', true); 
 prob.update_filters(selection_filters); 
 num_solutions  = 100; 
 
 
-
-
-%}
 %%
 %
 %        Solve Prolem of Minimum Mass
 %
 %
-
-
 mass_sols = min_mass(prob, problem_data, num_solutions);
 
-mass_fig = plot_result(mass_sols(1), kp_idx, tau_offset_idx,...
-                                                 time, theta, tau_des);
+%mass_fig = plot_result(mass_sols(1), kp_idx, tau_offset_idx,...
+%                                                 time, theta, tau_des);
+
+
 %%
 %
 %        Solve Prolem of Minimum Effective Inertia 
