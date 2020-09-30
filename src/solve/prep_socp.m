@@ -110,7 +110,6 @@ h_rsoc = {};
 
 for j = 1:num_quadcon
     rhs = quadcon(j).rhs;
-    Qj = quadcon(j).Qc;
     qc = quadcon(j).q/2;  % NO FACTOR IN GUROBI SOLVE -- MAY NEED TO CHECK DOCS 
 
     % Because we are callign from motor select, will assume
@@ -120,10 +119,15 @@ for j = 1:num_quadcon
     %qc = quadcon(i).q;
 
 
-
-
-    [rows, cols, vals] = find(Qj);
-
+    if isfield(quadcon(j), Qc)
+        Qj = quadcon(j).Qc;
+        [rows, cols, vals] = find(Qj);
+    else 
+        rows = quadcon(j).Qrow;
+        cols = quadcon(j).Qcol;
+        vals = quadcon(j).Qval;
+        Qj = sparse(rows, cols, vals); 
+    end 
 
     %%% detemine if SOC/ROTSOC or Standard PSD 
     %
