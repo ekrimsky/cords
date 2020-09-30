@@ -33,13 +33,6 @@ time = time(:);
 tau_des = tau_des(:); 
 n = length(time); 
 
-omega(omega == 0) = -1e-12;  % to help debug something 
-
-%disp('fix velocities ')
-%omega = abs(omega) + 0.1; 
-
-
-% NOTE: could do 2 trajectories 
 % Fill in all the problem data parts 
 
 % Define aux variable x and the indices into it 
@@ -53,11 +46,12 @@ pwr_idxs = 3:(3 + n - 1);  % indices corresponding to power consumed at each tim
 % Block comment at the begining of each of these would be good 
 
 
-% Initialize Cell Arrays 
 
 
-
-% Fill in Objective --- slpit out ibjective 
+%
+%                       Fill in Objective (i.e. Costs)
+%
+M0 = []; 
 p0 = []; 
 c0 = []; 
 f0 = zeros(w, 1);
@@ -67,8 +61,6 @@ beta0 = 0;
 
 
 % Define efficiencies psi, 
-
-
 
 
 %
@@ -121,46 +113,7 @@ beta0 = 0;
 Phi = 0.99; % driver board efficienc 
 Phi_inv = 1/Phi; 
 Psi = 0.8; % regen efficincy psi 
-% Fill in general inequality constraints 
-%{
-Q = {}; 
-c = {};  
-M = {};
-r = {}; 
-bet = {};
 
-
-for j = 1:n  % Loop through the time indices 
-
-    % If positive power conumption 
-    e_j = zeros(n, 1); 
-    e_j(j) = 1; % one hot vector / unit basis vector 
-    e_js = sparse(e_j);
-    % NOTE  -- would it be more efficient to divide through by R so no Q dependednce on inputs? Still r and c dependence though 
-
-    % Q can either take in a sparse diagonal matrix OR 
-    % a non-sparse vector specifying the diagoan
-
-    r_tmp = [0; 0; -e_j];  % This picks out the specific power consumption value at this time step
-
-    Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; % vector type input 
-    c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j; % TODO -- should need to account for direction 
-    
-    M{end + 1, 1} = []; 
-    r{end + 1, 1} = r_tmp;  % accounting for the other vars 
-    bet{end + 1, 1} = 0; 
-
-    % If negative power consumption
-
-
-    %Q{end + 1, 1} = @(motor, ~) Psi*motor.R * spdg_j; % sparse matrix type input
-    Q{end + 1, 1} = @(motor, ~) Psi*motor.R * e_j; % sparse matrix type input 
-    c{end + 1, 1} = @(motor, gearbox) Psi*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j;     
-    M{end + 1, 1} = []; 
-    r{end + 1, 1} = r_tmp;  % accounting for the other vars 
-    bet{end + 1, 1} = 0; 
-end 
-%} 
 
 
 % Comment here should then explain what each row of this inequality looks like 
@@ -206,6 +159,7 @@ problem_data.p0 = p0;
 problem_data.c0 = c0;
 problem_data.f0 = f0;
 problem_data.beta0 = beta0;
+problem_data.M0 = M0; 
 
 % TODO add M0 
 
@@ -221,8 +175,7 @@ problem_data.x_ub = x_ub;
 
 
 % Solve the problem 
-
-%settings.solver = 'ecos';   % if we wanted to use ecos 
+%settings.solver = 'ecos'; 
 settings.solver = 'gurobi';
 prob = cords('settings', settings, 'reuse_db', true); % instantiate new motor selection problem 
 prob.update_problem(problem_data);   % update with the data 

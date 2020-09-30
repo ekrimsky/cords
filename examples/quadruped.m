@@ -501,24 +501,19 @@ tau_c = [d_rfs; d_rfk; d_rhs; d_rhk; d_lfs; d_lfk; d_lhs; d_lhk];
 
 
 
-% Standard (SOCP) objective Terms all empty because linear fractional
-%Q0 = []; 
-%c0 = []; 
-%M0 = [];
-%r0 = []; 
-%beta0 = [];
-Q = {};
-c = {};
-M = {};
-r = {};
-bet = {}; % beta
 
 % Drive board efficiency Phi
 Phi = 0.98; % driver board efficiency
 Phi_inv = 1/Phi; 
 
-for motor = 1:N_motors % loop through motors 
+% TODO -- NEED A BETTER COMMENT HERE 
+P_tmp = sparse([], [], [], 2*n_walk*N_motors, N_motors*n, 2*n_walk*N_motors);        % the P matrix WITHOUT the dependence on motor/gearbox 
+C_tmp = sparse([], [], [], 2*n_walk*N_motors, N_motors*n, 2*n_walk*N_motors);          % the C matrix WITHOUT the dependence on motor/gearbox
+F_tmp = sparse([], [], [], 2*n_walk*N_motors, dim_x, 2*n_walk*N_motors);        % the F matrix WITHOUT the dependence on motor/gearbox 
+beta_tmp = zeros(2*n_walk*N_motors, 1); 
 
+row = 0; 
+for motor = 1:N_motors % loop through motors 
     switch motor
         case 1     % RFS 
             p_idxs = p_rfs_idxs;
@@ -546,38 +541,56 @@ for motor = 1:N_motors % loop through motors
             omega = omega_lhk;
     end  % switch
 
+
+
     for j = 1:n_walk % loop through time points of gait  
+        row = row + 1; 
+
         idx = (motor - 1)*n + j; % corresponding index in omega_full
         e_j = zeros(N_motors*n, 1);  
         % pick out this motor and time point
         e_j(idx) = 1; % one hot vector / unit basis vector 
         %spdg_j =  sparse(diag(e_j));  
 
-        r_motor_j = zeros(dim_x, 1);
-        r_motor_j(p_idxs(j)) = -1; 
+        f_motor_j = zeros(dim_x, 1);
+        f_motor_j(p_idxs(j)) = -1; 
         
         %Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * spdg_j; 
-        Q{end + 1, 1} = @(motor, ~) Phi_inv*motor.R * e_j; 
-        c{end + 1, 1} = @(motor, gearbox) Phi_inv*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j;  
-        M{end + 1, 1} = []; 
-        r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
-        bet{end + 1, 1} = 0; 
+        P_tmp(row, :) = Phi_inv*e_j; 
+        C_tmp(row, :) = Phi_inv*omega(j)*e_j;  
+        F_tmp(row, :) = f_motor_j;  % accounting for the other vars 
+        beta_tmp(row) = 0; 
 
         % If negative MOTOR power consumption
-        %Q{end + 1, 1} = @(motor, ~) Phi*motor.R * spdg_j; 
-        Q{end + 1, 1} = @(motor, ~) Phi*motor.R * e_j; 
-        c{end + 1, 1} = @(motor, gearbox) Phi*motor.k_t*gearbox.direction*gearbox.ratio*omega(j)*e_j; 
-        M{end + 1, 1} = []; 
-        r{end + 1, 1} = r_motor_j;  % accounting for the other vars 
-        bet{end + 1, 1} = 0; 
+        P_tmp(row + 1, :) = Phi*e_j; 
+        C_tmp(row + 1, :) = Phi*omega(j)*e_j;  
+        F_tmp(row + 1, :) = f_motor_j;  % accounting for the other vars 
+        beta_tmp(row + 1) = 0; 
+        row = row + 2; 
     end 
 
+        
 end 
 
 
 
 
 
+%
+%
+%
+%        Now we need to add the Gx + h = 0 constraints and 
+%       account for motor/gearbox features 
+%
+%
+num_extra_ineq = length(h_ineq); 
+P_pad = sparse(num_extra_ineq, N_motors*n); % empty sparse to pad F with 
+C_pad = sparse(num_extra_ineq, N_motors*n); % empty sparse to pad C with 
+
+P = @(motor, gearbox) [motor.R*P_tmp; P_pad];
+C = @(motor, gearbox) [motor.k_t*gearbox.direction*gearbox.ratio*C_tmp; C_pad];
+F = @(motor, gearbox) [F_tmp; G_ineq]; 
+bet = [beta_tmp; -h_ineq]; 
 
 % TODO -- change to simple limits (and move the following line to be internal comp)
 
@@ -605,12 +618,12 @@ end
 %   for runtime of 1 step. However, objectives very close to zero could 
 %   lead to numerical issues 
 %{
-r_num = zeros(dim_x, 1); 
-r_num(e_gc_idx) = 1; 
+f_num = zeros(dim_x, 1); 
+f_num(e_gc_idx) = 1; 
 beta_num = 0;
 
-r_den = zeros(dim_x, 1);
-r_den(m_b_idx) = rho_batt; 
+f_den = zeros(dim_x, 1);
+f_den(m_b_idx) = rho_batt; 
 beta_den = 0; 
 
 cost_lb = 0;
@@ -626,12 +639,12 @@ cost_ub = 1;
 steps_per_sec = 1/t_gait(end);
 week_of_steps = steps_per_sec*60*60*24*7;
 
-r_num = zeros(dim_x, 1); 
-r_num(m_b_idx) = -rho_batt; 
+f_num = zeros(dim_x, 1); 
+f_num(m_b_idx) = -rho_batt; 
 beta_num = 0;
 
-r_den = zeros(dim_x, 1);
-r_den(e_gc_idx) = 1; 
+f_den = zeros(dim_x, 1);
+f_den(e_gc_idx) = 1; 
 beta_den = 0; 
 
 
@@ -663,29 +676,31 @@ cost_ub = -1;
 problem_data.T = T;
 problem_data.tau_c = tau_c;
 
-problem_data.Q = Q;
-problem_data.c = c; 
-problem_data.M = M; 
-problem_data.r = r; 
+%% Inputs specific to linear-fractional problems 
+problem_data.cost_lb = cost_lb; 
+problem_data.cost_ub = cost_ub; 
+problem_data.f_num = f_num;
+problem_data.f_den = f_den; 
+problem_data.beta_num = beta_num;
+problem_data.beta_den = beta_den; 
 
+%% Optional Inputs 
+
+problem_data.P = P;
+problem_data.C = C; 
+problem_data.F = F; 
 problem_data.beta = bet; 
+
+% extra equality constraint on x (Gx + h = 0)
 problem_data.G = G;    
 problem_data.h = h; 
-problem_data.G_ineq = G_ineq;
-problem_data.h_ineq = h_ineq;
+
 
 problem_data.omega = omega_full;  % all concat 
 problem_data.omega_dot = omega_dot_full; % TODO for inertial compensation
 problem_data.I_max = I_max; 
 problem_data.V_max = V_max; 
 
-%% Inputs specific to linear-fractional problems 
-problem_data.cost_lb = cost_lb; 
-problem_data.cost_ub = cost_ub; 
-problem_data.r_num = r_num;
-problem_data.r_den = r_den; 
-problem_data.beta_num = beta_num;
-problem_data.beta_den = beta_den; 
 
 
 
@@ -717,7 +732,6 @@ dt = t_gait(2) - t_gait(1);
 for j = 1:10
     for i = 1:length(t_gait)
         ax = update_robot(ax, robot_dims, q(i)); 
-
         pause(dt); drawnow; 
     end 
 end 
@@ -775,6 +789,8 @@ sol = sol_struct(1).sol;
 
 
 % NOTE on cords 
+
+% TODO -- may want to move this out 
 
 function [ax] = initialize_robot(ax, robot_dims, q)
 
