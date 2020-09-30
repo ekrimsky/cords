@@ -1,6 +1,6 @@
 # Convex Optimal Robot Drive Selection (CORDS)
 
-CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over tens of thousands motor and gearbox combinations specified in a [motor/gearbox data base folder](https://github.com/ekrimsk/MGDB/). 
+CORDS is a tool for optimal selection of motors and gearboxes for robotic applications. CORDS runs a brute force optimization over tens of thousands motor and gearbox combinations specified in a [motor/gearbox database folder](https://github.com/ekrimsk/MGDB/). 
 
 CORDS requires the user to specify a trajectory of robot joint velocities <img src="/tex/ae4fb5973f393577570881fc24fc2054.svg?invert_in_darkmode&sanitize=true" align=middle width=10.82192594999999pt height=14.15524440000002pt/> and to parametrize the desired joint torques through an optimization problem. For simple cases where both the joint trajectory *and the joint torques* are known, check out the CORDS web interface (A LINK - keenon make this website plz). 
 
@@ -15,17 +15,19 @@ CORDS can solve any motor/gearbox selection problem that can be cast as the prob
  Examples should be run from the root CORDS directory. 
 
 CORDS solves 
-<p align="center"><img src="/tex/8e524d848db90a42ba21abfbb9832cfe.svg?invert_in_darkmode&sanitize=true" align=middle width=336.2595522pt height=78.28491164999998pt/></p> 
+<p align="center"><img src="/tex/f841dd325a496627b7bb54f754e30fc5.svg?invert_in_darkmode&sanitize=true" align=middle width=338.20401119999997pt height=78.28491164999998pt/></p> 
  with optional contraints 
- <p align="center"><img src="/tex/6724982e0f57646145cfc277f79bb4d1.svg?invert_in_darkmode&sanitize=true" align=middle width=393.63336045pt height=93.11585249999999pt/></p>
+ <p align="center"><img src="/tex/09e274f44f167870ce28a0f8c59e80cf.svg?invert_in_darkmode&sanitize=true" align=middle width=200.89093035pt height=64.10956365pt/></p>
 
-with motor currents <img src="/tex/cd427d5ecb99fcabde5a7fffa6103a1f.svg?invert_in_darkmode&sanitize=true" align=middle width=50.911134449999984pt height=22.55708729999998pt/> and auxiliary variables <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the problem inputs satsify: 
-* <img src="/tex/bad8cbb55822df2eb7bbf59df6190e30.svg?invert_in_darkmode&sanitize=true" align=middle width=80.71703969999999pt height=26.17730939999998pt/>, diagonal PSD matrix for <img src="/tex/52c03ebb6ac0c8e7f1261d96409b7cbc.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/>
+with motor currents <img src="/tex/5164633986a5c3e175fc7baf049cfb67.svg?invert_in_darkmode&sanitize=true" align=middle width=48.05839499999998pt height=22.55708729999998pt/>, motor currents *squared* <img src="/tex/984ff922824d8d0e22eed2ab762a7e8a.svg?invert_in_darkmode&sanitize=true" align=middle width=61.522490699999985pt height=22.55708729999998pt/>, and auxiliary variables <img src="/tex/f948115fd1b4556bfe21e59235430b51.svg?invert_in_darkmode&sanitize=true" align=middle width=53.483454749999986pt height=22.55708729999998pt/> where the problem inputs satsify: 
+* <img src="/tex/51c48b7f3ccdeb9df714a595fd3b909a.svg?invert_in_darkmode&sanitize=true" align=middle width=74.86676339999998pt height=28.894955100000008pt/>, vector of non-negative coefficients 
+* <img src="/tex/c29e2f29cc506a63f00fd5e5460a20b3.svg?invert_in_darkmode&sanitize=true" align=middle width=56.88343154999998pt height=22.55708729999998pt/> satisfies <img src="/tex/36b3758fe61b44487e6516f9d2e71001.svg?invert_in_darkmode&sanitize=true" align=middle width=60.47175089999999pt height=27.15900329999998pt/> for <img src="/tex/be4dba4d5583203f4f9d3bee918a2c9e.svg?invert_in_darkmode&sanitize=true" align=middle width=59.365615649999995pt height=21.68300969999999pt/>
 * <img src="/tex/1e47cf05617b340cea169d5c16925949.svg?invert_in_darkmode&sanitize=true" align=middle width=87.50376194999998pt height=26.17730939999998pt/>, symmetric PSD
-* <img src="/tex/6f41c62b5c2794bfa9a2bef8f734c971.svg?invert_in_darkmode&sanitize=true" align=middle width=87.05570445pt height=26.17730939999998pt/>, for <img src="/tex/54f5851e55c7944fd243ff3e83828b82.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/> symmetric PSD or encodes SOC constraint (see cords.update_problem)
-* <img src="/tex/7da0268045d75f2db625838ec284e453.svg?invert_in_darkmode&sanitize=true" align=middle width=56.43537569999998pt height=22.55708729999998pt/> satisfies <img src="/tex/36b3758fe61b44487e6516f9d2e71001.svg?invert_in_darkmode&sanitize=true" align=middle width=60.47175089999999pt height=27.15900329999998pt/> for <img src="/tex/4884e50c3bb19744ca6785efc67fe03c.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/> and <img src="/tex/be4dba4d5583203f4f9d3bee918a2c9e.svg?invert_in_darkmode&sanitize=true" align=middle width=59.365615649999995pt height=21.68300969999999pt/>
+* <img src="/tex/f1ac71df28ea1db910391f7fe3887b61.svg?invert_in_darkmode&sanitize=true" align=middle width=77.17081184999999pt height=28.310511900000005pt/>, matrix of non-negative coefficients 
+* <img src="/tex/61f2fabd3245f89dfe5df5c62516e15e.svg?invert_in_darkmode&sanitize=true" align=middle width=77.258676pt height=26.17730939999998pt/> satisfies <img src="/tex/36b3758fe61b44487e6516f9d2e71001.svg?invert_in_darkmode&sanitize=true" align=middle width=60.47175089999999pt height=27.15900329999998pt/> for each row of C (<img src="/tex/4884e50c3bb19744ca6785efc67fe03c.svg?invert_in_darkmode&sanitize=true" align=middle width=65.97903014999999pt height=21.68300969999999pt/>) and <img src="/tex/be4dba4d5583203f4f9d3bee918a2c9e.svg?invert_in_darkmode&sanitize=true" align=middle width=59.365615649999995pt height=21.68300969999999pt/>
+Quadratic and Second Order Cone constraints can also be applied on the optimization variable (<img src="/tex/332cc365a4987aacce0ead01b8bdcc0b.svg?invert_in_darkmode&sanitize=true" align=middle width=9.39498779999999pt height=14.15524440000002pt/>). 
 
-CORDS can also solve linear fractional programs where the minimization objective is replaced with <img src="/tex/b923d55946fe7624d6802fc5c79a0dda.svg?invert_in_darkmode&sanitize=true" align=middle width=230.18670014999998pt height=27.94539330000001pt/>. 
+CORDS can also solve linear fractional programs where the minimization objective is replaced with <img src="/tex/e6956383372cf6126c6476af40778928.svg?invert_in_darkmode&sanitize=true" align=middle width=231.45005565pt height=27.94539330000001pt/>. 
 
 
 ## Problem Interfaces
@@ -43,10 +45,10 @@ First we build a structure of problem data to pass to the CORDS optimizer. Depen
 >> data = struct();        % empty struct with no fields that we will fill in 
 >> data.omega = omega;
 >> data.omega_dot = omega_dot; 
->> data.Q0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
+>> data.p0 = @(motor, gearbox) motor.R * ones(length(omega), 1);   % specify the DIAGONAL of Q0
 >> data.c0 = [];        % all other cost terms can be left empty
 >> data.M0 = [];
->> data.r0 = [];
+>> data.f0 = [];
 >> data.beta0 = []; 
 >> data.I_max = 80;     % set 80 Amp current limit
 >> data.V_max = 24;     % set 24 Volt voltage limit 
@@ -72,7 +74,7 @@ We now pass this data to the CORDS optimizer
 * Matlab 2017b or later but I dont really know, delaey does it work?
 * [Gurobi 8.1 or later](https://www.gurobi.com/academia/academic-program-and-licenses/) or [ECOS](https://github.com/embotech/ecos)
 
-Gurobi offers better performance than the ECOS solver but is only free for academic use. 
+Gurobi usually offers better performance than the ECOS solver but is only free for academic use. 
 
 ## Installation
 
@@ -80,9 +82,9 @@ Install CORDS by cloning the repository to your Matlab directory
 ```
 git clone --recurse-submodules https://github.com/ekrimsk/CORDS.git
 ```
-where adding `--recurse-submodules` will clone the motor/gearbox database as well. 
+where adding `--recurse-submodules` will clone the motor/gearbox database as well. Alternatively, you can download and extract the zip and seperately download the [motor database](https://github.com/ekrimsk/MGDB/) and move it to `CORDS/MGDB` on your machine. 
 
-CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/CORDS))`. Running `savepath` will then add CORDS to your default Matlab path. On linux systems you may need to add `addpath path_to_cords/CORDS` to you `startup.m` file. OR 
+CORDS needs to be added to the Matlab path. This can be done with `addpath(genpath(path_to_cords/CORDS))`. Running `savepath` will then add CORDS to your default Matlab path. On linux systems you may need to add `addpath path_to_cords/CORDS` to you `startup.m` file. 
 
 ## Documentation 
 
