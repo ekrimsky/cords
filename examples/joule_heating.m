@@ -26,3 +26,6 @@ solutions = prob.optimize(10);   % get the 10 best motor/gearbox combinations
 data.T = [-theta(:)];      % include coupling of motor torque and spring torque
 prob.update_problem(data);       % attach the data to the problem
 solutions_pe = prob.optimize(10);   % get the 10 best motor/gearbox combinations 
+
+
+save('examples/joule_heating_results.mat'); 

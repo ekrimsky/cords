@@ -219,6 +219,4 @@ theta_0 = tau_offset/kp;
 
 
 % define one-hot in src 
-
-
-
+save('examples/parallel_elastic_results.mat'); 
