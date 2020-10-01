@@ -487,6 +487,7 @@ methods (Access = public)
     %   See 'update filters' in MGDB for usage
     %
         obj.mg_database.update_filters(new_filters); % hashtag YES filter
+        obj.filters = obj.mg_database.get_filters(); 
     end 
 
 
@@ -836,13 +837,12 @@ methods (Access = private)
 
     end % end validate problem data 
 
-    function [sol_structs, cost_list, mincost, exitflag] = ...
+    function [sol_structs, cost_list, mincost, opt_exitflag] = ...
                            optimize_standard(obj, motors, gearboxes, num_return)
 
         start_tic = tic; 
 
         num_combinations = length(motors); 
-
         cost_list = nan(num_combinations, 1); 
         cutoff = inf; % no valid solutions yet 
         mincost = inf; % NOTE: not same as cutoff if want to hold on to multiple sols 
@@ -944,6 +944,11 @@ methods (Access = private)
             sol_structs(ii) = sol_struct;
         end 
 
+        if num_sols == 0
+            sol_structs= struct([]);
+        end 
+
+        opt_exitflag = 0; % TODO 
     end % end optimize standard 
 
     function [sol_structs, cost_list, mincost, exitflag] = ...
@@ -1236,12 +1241,11 @@ methods (Access = private)
             
             if ~isempty(bad_idxs_clean) || isnan(y_sol(1))
 
- 
-
                 [y_sol, combo_cost, result] = obj.mixed_int_solve(matrices, index_map.del, cutoff);
                 [sol, bad_idxs_clean, directions] = obj.parse_solution(y_sol,...
                                      index_map, comp_torques,  motor, gearbox, true); 
                 
+            
                 exitflag = 2; 
             end
 
@@ -1290,7 +1294,7 @@ methods (Access = private)
         % Gurobi OR Sedumi OR ECOS 
         % 
         % SOCP implicit for Gurobi solve (looks like a stanrd QCQP)
-        omega = pd.omega; 
+        omega = pd.omega;           % omega of JOINT (not motor)
         omega_dot = pd.omega_dot; % may be all zeros 
 
         eta = gearbox.efficiency; 
@@ -1329,7 +1333,8 @@ methods (Access = private)
         % 		Friction/Drag and Inertia Compensation
         %
         % tau_motor_friction is JUST kinetic 
-        [tau_motor_friction, tau_static_friction] = obj.friction_model(motor, gearbox); 
+        [tau_motor_friction, tau_static_friction] = obj.friction_model(motor,...
+                                                                      gearbox); 
         % Since BEFORE gearbox only multiplied by ratio NOT ratio^2 
         % will effectively get multiplied by ratio again through gearbox
         tau_motor_inertia = motor.inertia * ratio * omega_dot; 
@@ -1514,7 +1519,7 @@ methods (Access = private)
                 tmp_min = I_l_aug - I_comp_aug - 0.1;     
 
                 %
-                %   comment on the paper 
+                %   comment on the paper to read (bemporad, morari 1999)
                 %
                 %
                 A_del_gm = sparse([], [], [], 2*num_aug, dim_y, 6*num_aug);
@@ -1868,7 +1873,7 @@ methods (Access = private)
 
         if eta < 1  % TODO -- group with other things 
         	c_rho_aug(gm_idxs) = so.* obj.tolerances.rho; 
-        	c_rho_aug(mu_idxs) = -so .* obj.tolerances.rho; 
+        	c_rho_aug(mu_idxs) = -so.*obj.tolerances.rho; 
         end 
 
         c_cost = c_cost_init + c_rho_aug;
@@ -2037,8 +2042,7 @@ methods (Access = private)
         % a sanity check to be commented out 
 
         if (max(min_gmmu_all) > obj.tolerances.gmmu_tol) && clean_flag 
-            disp('pppp')
-            keyboard
+            warning('Delaney, tell me if this warning ever pops up!')
         end 
         
 
@@ -2157,7 +2161,7 @@ methods (Access = private)
                                 (cost_diff_rel > obj.tolerances.reltol)
             new_sol = nan;
             new_cost = inf; 
-
+            % NOTE: should add some logs on these 
         else 
             new_sol = clean_sol;
             new_cost = clean_cost;
@@ -2298,40 +2302,41 @@ methods (Access = private)
     %
     %
     %
-        omega = obj.problem_data.omega;
-        sign_omega = sign(omega); 
 
+        % Updated 10/1/20 to account for gearbox ratio in drag torques 
+        omega_motor = gearbox.direction*gearbox.ratio*obj.problem_data.omega; 
+        sign_omega_motor = sign(omega_motor); 
 
         if strcmp(motor.type, 'DC')
 
             if ~isnan(motor.coulomb_friction)
                 tau_static_friction = motor.coulomb_friction;
-                coulomb_friction = sign_omega*motor.coulomb_friction;
+                coulomb_friction = sign_omega_motor*motor.coulomb_friction;
             else 
                 if isnan(motor.I_nl)
                     I_nl = (motor.V - motor.k_t*motor.omega_nl)/motor.R; 
                 else 
                     I_nl = motor.I_nl;
                 end 
-                coulomb_friction = sign_omega*motor.k_t*I_nl;
+                coulomb_friction = sign_omega_motor*motor.k_t*I_nl;
             end 
 
             if isnan(motor.viscous_friction)
                 viscous_friction = 0;
             else 
-                viscous_friction = omega*motor.viscous_friction;
+                viscous_friction = omega_motor*motor.viscous_friction;
             end 
         elseif strcmp(motor.type, 'BLDC')
             if ~isnan(motor.coulomb_friction)
                 tau_static_friction = motor.coulomb_friction; 
-                coulomb_friction = sign_omega*motor.coulomb_friction;
+                coulomb_friction = sign_omega_motor*motor.coulomb_friction;
             else
                 tau_static_friction = 0; 
                 coulomb_friction = 0;
             end 
 
             if ~isnan(motor.viscous_friction)
-                viscous_friction = omega*motor.viscous_friction;
+                viscous_friction = omega_motor*motor.viscous_friction;
             else 
                 % estimate from no-load tests
                 if isnan(motor.I_nl)
@@ -2342,7 +2347,7 @@ methods (Access = private)
                     % compute what it woud be 
                 drag_torque = motor.k_t*I_nl;
                 c_v = drag_torque/motor.omega_nl;
-                viscous_friction = c_v*omega;  
+                viscous_friction = c_v*omega_motor;  
             end 
         else 
             error('friction_model: Invalid motor type');
@@ -2815,7 +2820,7 @@ function def_tolerances = default_tolerances()
     def_tolerances = struct('rho', 1e-4,...
                             'gmmu_tol', 1e-3, ... % 1 ma 
                             'feastol', 1e-5,...    % 1e-5
-                            'reltol', 2e-2,... % 2 percent optimality
+                            'reltol', 5e-2,... % 5 percent optimality
                             'abstol', 1e-3,...  % if tighter, sometimes issues
                             'qcvx_reltol', 1e-3,...
                             'qcvx_abstol', 1e-7);
