@@ -864,7 +864,7 @@ methods (Access = private)
             motor = motors(j);
             gearbox = gearboxes(j); 
 
-            [combo_cost, tmp_sol, comp_time, exitflag] = obj.combo_solve(motor,...
+            [combo_cost, tmp_sol, timing, exitflag] = obj.combo_solve(motor,...
                                          gearbox, cutoff); 
             if exitflag > 0; num_rep_solves = num_rep_solves + 1; end 
             if exitflag > 1; num_mi_solves  = num_mi_solves + 1;  end 
@@ -880,6 +880,8 @@ methods (Access = private)
                     sol_struct.sol = tmp_sol;
                     sol_struct.motor = motor; 
                     sol_struct.gearbox = gearbox; 
+                    sol_struct.timing = timing; 
+
 
                     pq.insert(combo_cost, sol_struct); 
                     if pq.size() > num_return  % if inserting put us over limit 
@@ -900,7 +902,7 @@ methods (Access = private)
                 % to reach dual cutoff. This acts as a pseudocost for 
                 % combinations where we havent computed the full
                 % solution but havent proven infeasibility either
-                cost_list(j) = cutoff + (1/comp_time); 
+                cost_list(j) = cutoff + (1/timing.solve); 
             end 
 
             %
@@ -1045,7 +1047,7 @@ methods (Access = private)
                     %        Solve 
                     %
                     
-                    [combo_cost, tmp_sol, comp_time] = obj.combo_solve(motor,...
+                    [combo_cost, tmp_sol, timing] = obj.combo_solve(motor,...
                                                         gearbox, bound); 
              
 
@@ -1086,6 +1088,10 @@ methods (Access = private)
                     sol_struct.sol = sols{j};
                     sol_struct.motor = motor; 
                     sol_struct.gearbox = gearbox; 
+
+                    % TODO add in timing results 
+                    %sol_struct.timing = timing; 
+
 
                     pq.insert(ub_list(j), sol_struct); 
 
@@ -1184,7 +1190,7 @@ methods (Access = private)
     end  % end optimize fractional 
    
 
-    function [combo_cost, sol, solve_time, exitflag] = combo_solve(obj,...
+    function [combo_cost, sol, timing, exitflag] = combo_solve(obj,...
                                                         motor, gearbox, bound)
     %
     %
@@ -1203,8 +1209,8 @@ methods (Access = private)
         %if strcmp(obj.settings.solver, 'gurobi')
         %    matrices = presolve(matrices, false(length(matrices.lb), 1));
         %end
-
-        [y_sol, combo_cost] = obj.socp_solve(matrices, cutoff);
+        [y_sol, combo_cost, result] = obj.socp_solve(matrices, cutoff);
+        tsolve = result.runtime; 
 
         [sol, bad_idxs, directions] = obj.parse_solution(y_sol,...
                                      index_map, comp_torques,  motor, gearbox); 
@@ -1215,13 +1221,13 @@ methods (Access = private)
         % If mu/gamma decomposition inccorect at some indices, try to fix it 
         if ~isempty(bad_idxs)  % need to run next solve 
             init_cost = combo_cost; 
-            [y_sol, combo_cost] = obj.clean_solution(y_sol, combo_cost, index_map,...
+            [y_sol, combo_cost, result] = obj.clean_solution(y_sol, combo_cost, index_map,...
                                     matrices, comp_torques, motor, gearbox);
             % set clean_flag = true in calling parse solution 
             [sol, bad_idxs_clean, directions] = obj.parse_solution(y_sol,...
                                      index_map, comp_torques,  motor, gearbox, true); 
             exitflag = 1; 
-            
+            tsolve = tsolve + result.runtime;
             if ~isempty(bad_idxs_clean) || isnan(y_sol(1))
 
                 [y_sol, combo_cost, result] = obj.mixed_int_solve(matrices, index_map.del, cutoff);
@@ -1230,10 +1236,14 @@ methods (Access = private)
                 
             
                 exitflag = 2; 
+                tsolve = tsolve + result.runtime; 
             end
 
         end 
-        solve_time = toc(start_tic);
+
+        combo_time = toc(start_tic);
+        timing.solve = tsolve;
+        timing.other = combo_time - tsolve; 
     end 
 
 
