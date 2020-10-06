@@ -38,6 +38,9 @@ n = length(time);
 % Define aux variable x and the indices into it 
 % x = [kp, tau_c, t]
 
+
+
+
 w = 2 + n; % dimensionality of x vector
 kp_idx = 1; 
 tau_offset_idx = 2; 
@@ -120,7 +123,8 @@ Psi = 0.8; % regen efficincy psi
 tmp_mat = sparse(eye(n)); 
 P = @(motor, gearbox) motor.R * [Phi_inv * tmp_mat; Psi * tmp_mat]; 
 omega_diag = sparse(diag(omega));
-C = @(motor, gearbox) motor.k_t*gearbox.direction*gearbox.ratio * [Phi_inv*omega_diag; Psi*omega_diag]; 
+C = @(motor, gearbox) motor.k_t*gearbox.direction*gearbox.ratio * ...
+                                        [Phi_inv*omega_diag; Psi*omega_diag]; 
 
 % NOTE on how it can be faster to declare like this 
 F_tmp = sparse(1:2*n, [pwr_idxs, pwr_idxs], -ones(1, 2*n), 2*n, w);
@@ -180,26 +184,19 @@ settings.solver = 'gurobi';
 prob = cords('settings', settings, 'reuse_db', true); % instantiate new motor selection problem 
 prob.update_problem(problem_data);   % update with the data 
 
-%{
-prob.filter_motors 
-prob.filter_gears 
+% Lets set a mass limit of 8 kg 
+filters.total_mass = 8;
+% only look at motors/gearboxes from maxon + faulhaber
+filters.manufacturer = {'Maxon', 'Faulhaber'}; 
+prob.update_filters(filters); 
 
-% consider whats the best way to do this 
-prob.hints = % HOW BEST TO DO THIS? -- TODO 
-%} 
 
 % Need to think about what return types should be 
 % What inputs would make sense????? 
 num_solutions = 100;
 sol_struct = prob.optimize(num_solutions);
 
-sol = sol_struct(1).sol; 
 
-
-% Extract Results 
-kp = sol.x(kp_idx)
-tau_offset = sol.x(tau_offset_idx);
-theta_0 = tau_offset/kp; 
 
 
 %save(fullfile('examples', 'parallel_elastic_results.mat')); 
@@ -220,3 +217,30 @@ theta_0 = tau_offset/kp;
 
 % define one-hot in src 
 save('examples/parallel_elastic_results.mat'); 
+
+
+opt_struct = sol_struct(1); 
+
+
+% Extract Results 
+kp = opt_struct.sol.x(kp_idx)
+tau_offset = opt_struct.sol.x(tau_offset_idx);
+theta_0 = tau_offset/kp; 
+
+
+opt_motor = opt_struct.motor; 
+opt_gearbox = opt_struct.gearbox; 
+
+% break down parameters of solutions 
+opt_sol = opt_struct.sol;
+x = opt_sol.x; 
+I = opt_sol.I;
+
+pwr = x(pwr_idxs); 
+
+spring_torque = -kp*theta - tau_offset; 
+
+
+
+
+
