@@ -335,31 +335,14 @@ methods (Access = public)
             num_return = varargin{1};
         end 
 
-        %
-        %       Get Valod Motor/Gearbox Combinations 
-        % Filtering out some options by max velocity  
-        % If our specific filters are tighter than the others, use those 
-        obj.filters.omega_max = max(obj.filters.omega_max,...
-                                              max(abs(obj.problem_data.omega)));
-        %% get bounds on torque 
-        tmp_filters = obj.filters;
-
-        [tau_peak_min, tau_rms_min] = obj.compute_torque_bounds();
-        
-        % NOTE: will want to add a way to turn these off -- could 
-        % have presetting a filter as negative inf as flag for that 
-        tmp_filters.tau_max = max(tmp_filters.tau_max, tau_peak_min);
-        tmp_filters.tau_rms = max(tmp_filters.tau_rms, tau_rms_min);
-        obj.mg_database.update_filters(tmp_filters);
-        [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
-        obj.mg_database.update_filters(tmp_filters);  % revert back to original 
+        [motor_keys, gearbox_keys] = obj.get_combinations(); 
 
         % Convert from database map keys to structs 
         for i = 1:length(motor_keys)  % slightly faster than cell fun
             motors(i) = obj.mg_database.motors(motor_keys{i});
             gearboxes(i) = obj.mg_database.gearboxes(gearbox_keys{i});
         end 
-    
+
         %       
         %          Call the Optimizer for the Given Problem Type  
         %
@@ -1287,7 +1270,6 @@ methods (Access = private)
         %
         %
         %
-
         pd = obj.problem_data;  % making a local copy has HUGE positive impact on speed 
 
         % How we actually "solve" will depend on solver
@@ -1302,8 +1284,16 @@ methods (Access = private)
         k_t = motor.k_t; 
 
         % calculate current limits 
-        I_u = min(pd.I_max, (pd.V_max - k_t*ratio*omega)/motor.R); 
-        I_l = max(-pd.I_max, (-pd.V_max - k_t*ratio*omega)/motor.R);
+        I_uv = (pd.V_max - k_t*ratio*omega)/motor.R;  % current bound from volt
+        I_u = min(pd.I_max, I_uv);
+        I_lv = (-pd.V_max - k_t*ratio*omega)/motor.R; % current bound from volt
+        I_l = max(-pd.I_max, I_lv);
+
+        % would be smarter to prefilter these 
+        if min(I_uv - I_lv) < eps 
+            error('Lower and Upper current bounds equal');
+        end 
+
         %Hmm, and if negative? 
 
         G = pd.G(motor, gearbox);
@@ -1344,6 +1334,8 @@ methods (Access = private)
 
         bo = 1e-3; % bound offset for upper bounds to make it more clear 
         % which bound is directly responsible for infeasibility 
+
+        % gm or mu = I - I_comp (accounts for friction + inertia)
 
         tau_mfj = tau_motor_friction + tau_motor_inertia; 
         I_comp = tau_mfj/k_t; % corresponding current 
@@ -1584,10 +1576,16 @@ methods (Access = private)
             A_eq_tau_x(1:n, x_idxs) = -T; 
             b_eq_tau_x(1:n) = tau_c; 
 
+            %% Still need to account for motor friction and inertia
+            % and effectice current losses in I_comp 
+            % Tx + tau_c = tau_out
+            % tau_out + tau_gb_inertia = ratio*k_t(I - I_comp)
+            %  rerrange as tau_gb_inertia + ratio*k_t*I_comp = -tau_out + ratio*k_t*I
+
             A_eq_tau_x(n + (1:n), tau_idxs) = -eye(n);
             A_eq_tau_x(n + (1:n), I_idxs) = ratio*k_t*eye(n);
-            b_eq_tau_x(n + (1:n)) = 0; % no gb inertia to account for 
-
+            b_eq_tau_x(n + (1:n)) = tau_gearbox_inertia + ratio*k_t*I_comp;    
+    
             A_eq_other = [];	% no others 
             b_eq_other = []; 
             A_ineq_other = [];	% no others 
@@ -2344,6 +2342,15 @@ methods (Access = private)
                 else
                     I_nl = motor.I_nl;
                 end  
+
+                if (I_nl <= 0)
+                    msg = sprintf(['\nComputed no-load current is negative',...
+                         ' for motor %s, gearbox %s, using zero instead'], ...
+                                                 motor.key, gearbox.key);
+                    warning(msg);
+                    I_nl = 0; 
+                end 
+
                     % compute what it woud be 
                 drag_torque = motor.k_t*I_nl;
                 c_v = drag_torque/motor.omega_nl;
@@ -2367,6 +2374,15 @@ methods (Access = private)
         end 
 
         tau_motor_friction = coulomb_friction + viscous_friction; 
+
+
+
+        % sanity check 
+        tmp = tau_motor_friction.*omega_motor; 
+        if min(tmp) < 0 
+            error('Friction must oppose motion');
+        end 
+
     end 
 
 
@@ -2460,6 +2476,32 @@ methods (Access = private)
 
     end % socp_solve
 
+    function [motor_keys, gearbox_keys] = get_combinations(obj)
+
+        %       Get Valod Motor/Gearbox Combinations 
+        % Filtering out some options by max velocity  
+        % If our specific filters are tighter than the others, use those 
+        obj.filters.omega_max = max(obj.filters.omega_max,...
+                                              max(abs(obj.problem_data.omega)));
+        %% get bounds on torque 
+        tmp_filters = obj.filters;
+
+        [tau_peak_min, tau_rms_min] = obj.compute_torque_bounds();
+        
+        % NOTE: will want to add a way to turn these off -- could 
+        % have presetting a filter as negative inf as flag for that 
+        tmp_filters.tau_max = max(tmp_filters.tau_max, tau_peak_min);
+        tmp_filters.tau_rms = max(tmp_filters.tau_rms, tau_rms_min);
+        obj.mg_database.update_filters(tmp_filters);
+        [motor_keys, gearbox_keys] = obj.mg_database.get_combinations();
+        obj.mg_database.update_filters(tmp_filters);  % revert back to original 
+
+        % TODO -- additional filtering based on voltage/current limits 
+        %warning('WRITE THIS CODE')
+
+
+    
+    end 
 
     function vprintf(obj, priority, varargin)
     %
