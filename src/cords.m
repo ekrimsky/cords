@@ -964,16 +964,20 @@ methods (Access = private)
         
         num_combinations = length(motors); 
 
-        lb_list = global_lb * ones(num_combinations, 1);  
-        %ub_list = global_ub * ones(num_combinations, 1); 
-        ub_list = inf(num_combinations, 1); % no valid solutions yet
+        init_global_ub = global_ub; 
+        init_global_lb = global_lb;
 
+        lb_list = global_lb * ones(1, num_combinations);  
+        ub_list = inf(1, num_combinations); % no valid solutions yet
 
+        cost_list = inf(1, num_combinations); % what we return 
         % storing solutions separately so dont need to always recompute
         % if bounds already convered for a given design 
         sols = cell(num_combinations, 1); 
 
-
+        % For storing information on timing spent on each combination
+        t_solve = zeros(1, num_combinations);
+        t_other = zeros(1, num_combinations);
 
         outer_loop_iter = 1; 
 
@@ -1000,84 +1004,70 @@ methods (Access = private)
         bad_lower_bound_flag = false;   % flag for initial lower bounds too high
         bad_upper_bound_flag = false;   % flag for initial upper bounds too low 
 
+
+        opt_combos = 1:num_combinations;  % havent determined invalid yet 
+
+        % Potential development 
+        % In outer iters trade off between working upper and lower bounds 
+
         % Totsl convrthence criteria 
         while (max_abs_bnd_diff > obj.tolerances.qcvx_abstol) && ...
-              (max_rel_bnd_diff > obj.tolerances.qcvx_reltol) && ...
-               ~bad_lower_bound_flag && ~bad_upper_bound_flag
+              (max_rel_bnd_diff > obj.tolerances.qcvx_reltol) 
 
+            %  ~bad_lower_bound_flag && ~bad_upper_bound_flag
             pq = PQ(true); % max priority queue -- new every loop 
 
-            for j = 1:num_combinations % Our loop thoufg   
-                
-                motor = motors(j);
-                gearbox = gearboxes(j); 
+            for j = 1:length(opt_combos)    
+
+                kk = opt_combos(j);  % original index in motor/gearbox list 
+                motor = motors(kk);
+                gearbox = gearboxes(kk); 
 
                 % while not converged on this + break condition below
                 % Need each upper and lower bound to approach each other every iter
 
-                infeas_lb_flag = false; 
-                if outer_loop_iter == 1
-                    init_flag = true;  
-                end 
+                % switch to update bound flag? 
+                %infeas_lb_flag = false; 
 
                 abs_diff_j = ub_list(j) - lb_list(j);
-                rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
-
+                if isinf(abs_diff_j)
+                    rel_diff_j = inf; % to prevent divide by inf 
+                else 
+                    rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
+                end  
            
-                while (lb_list(j) <= global_ub)  && ~infeas_lb_flag ...
-                      &&  (rel_diff_j > obj.tolerances.qcvx_reltol)  && ...        
-                          (abs_diff_j > obj.tolerances.qcvx_abstol) || init_flag 
+                while (rel_diff_j > obj.tolerances.qcvx_reltol)  && ...        
+                    (abs_diff_j > obj.tolerances.qcvx_abstol) && (lb_list(j) <  global_ub) 
+                
+                    % this bound is alwats less than or equal to global ub 
+                    bound = min((lb_list(j) + ub_list(j))/2, global_ub); 
 
-                   
-                    if init_flag 
-                        bound = global_ub;
-                        init_flag = false; 
-                    else 
-                        % upper bound found for this combo may be 
-                        % lower than the global boudn for the solution pool 
-                        %bound = (lb_list(j) + min(ub_list(j), global_ub))/2; 
-
-                        % Split the difference between lb and ub
-                        % BUT if this is higher than the cutoff (global ub)
-                        % this is a waste of compuation so do whichever is lower 
-                        bound = min((lb_list(j) + ub_list(j))/2, global_ub); 
-                    end 
-
-                    %
-                    %        Solve 
-                    %
-                    
                     [combo_cost, tmp_sol, timing] = obj.combo_solve(motor,...
-                                                        gearbox, bound); 
+                                                               gearbox, bound); 
+                    % accumulate timing 
+                    t_solve(j) = t_solve(j) + timing.solve;
+                    t_other(j) = t_other(j) + timing.other; 
              
-
                     % bound update 
                     if isinf(combo_cost)    % infeasible - update lb 
                         lb_list(j) = bound; % if init bounds infeas, will set lb/ub to same 
-                        infeas_lb_flag = true; % will stop moving these bounds till next iter 
+                        break;
                     else    % feasible 
                         % this will always be a better solution than
                         % previously had for this design 
                         sols{j} = tmp_sol;
-                        ub_list(j) = bound; 
+                        ub_list(j) = bound; % can do at least this well 
                     end 
                 
                     abs_diff_j = ub_list(j) - lb_list(j); 
-                    rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
+                    if isinf(abs_diff_j)
+                        rel_diff_j = inf;
+                    else
+                        rel_diff_j = abs_diff_j/min(abs(ub_list(j)), abs(lb_list(j))); 
+                    end 
                 end  % end while update bounds for combo j 
-
-
-                % Check if upper bound for design we just considered goes in the PQ 
-                %if ub_list(j) < global_ub   % ie. this goes into sol pool
-
-                if lb_list(j) >= global_ub
-                    lb_list(j) = ub_list(j); % just for computing rel diffs 
-                end 
-
-
-                if (ub_list(j) < global_ub) || ...
-                    ((ub_list(j) < global_ub + eps) && (pq.size() < num_return))    
-                    
+        
+                if  (ub_list(j) - global_ub) < 5*eps  % we will unnecesariy 
 
                     % Heres THE PLAN
                     % store cell array of solutions for all options 
@@ -1089,9 +1079,9 @@ methods (Access = private)
                     sol_struct.motor = motor; 
                     sol_struct.gearbox = gearbox; 
 
-                    % TODO add in timing results 
-                    %sol_struct.timing = timing; 
-
+                    sol_timing.solve = t_solve(j); 
+                    sol_timing.other = t_other(j);
+                    sol_struct.timing = sol_timing; 
 
                     pq.insert(ub_list(j), sol_struct); 
 
@@ -1125,21 +1115,43 @@ methods (Access = private)
                                 break;  % break the while on this 
                             end 
                         end 
+
                     end 
                 end 
 
-
+                % TODO -- maybe update rel gap - not significant computation 
                 obj.vprintf(1, repmat('\b', 1, length(disp_txt))); 
                 disp_txt = sprintf('%6d%12d%13.3e%13.3e%13.3e%8.4f%7.1f',...
                         outer_loop_iter, j, global_lb, global_ub, mincost,... 
                                             max_rel_bnd_diff,  toc(start_tic));                
                 obj.vprintf(1, disp_txt);
-            end    % finish loop through combos 
+
+            end    % ----- finish loop through combos -----
+
+            % only care about valid combinations 
+
+            % checking lower bounds because the upper bounds corresponding
+            % to these solutions may still get reduced 
+            % ........ tolerancing though? 
+            idxs = find(lb_list < global_ub);
+            opt_combos = opt_combos(idxs);      % get indices wrt original lists 
+
+            % shrink and reindex the lists
+            sols = sols(idxs);
+            ub_list = ub_list(idxs); 
+            lb_list = lb_list(idxs); 
+            t_solve = t_solve(idxs); 
+            t_other = t_other(idxs);
+
+            cost_list(opt_combos) = ub_list;    % update for return  
 
             bnd_diff = ub_list - lb_list; 
             rel_bound_diff = bnd_diff./max(ub_list, abs(lb_list));
+            rel_bound_diff(isinf(bnd_diff)) = inf; 
+
             max_abs_bnd_diff = max(bnd_diff);   % inf - inf = nan
             max_rel_bnd_diff = max(rel_bound_diff); 
+
             % Update global lower bounds 
             global_lb = min(lb_list); % no design can beat this 
 
@@ -1155,17 +1167,19 @@ methods (Access = private)
                 obj.vprintf(1, ['\nNo solutions found.',...
                                             ' Try increasing the upper bound']);
                 bad_upper_bound_flag = true; 
+                break; 
             end 
 
             outer_loop_iter = outer_loop_iter + 1; 
             disp_txt = []; 
             obj.vprintf(1, '\n');   % print new line            
-        end 
+        end   % main while 
 
         % TODO -- add a final print here         
         num_sols = pq.size(); % may not have found num_return feas sols 
+
         if num_sols == 0
-            sol_structs = struct(); % empty struct; 
+            sol_structs = struct([]); % empty struct; 
         elseif num_sols < num_return
             obj.vprintf(1, 'Only %d feasible solution(s) found\n', num_sols); 
         end 
@@ -1174,8 +1188,7 @@ methods (Access = private)
             [~, sol_struct] = pq.pop(); 
             sol_structs(i) = sol_struct;
         end 
-        cost_list = ub_list; % NOTE: no pseudocost incorporated here 
-        
+
         if (max_abs_bnd_diff < obj.tolerances.qcvx_abstol) 
             exitflag = 1; 
         elseif (max_rel_bnd_diff < obj.tolerances.qcvx_reltol) 
@@ -1187,7 +1200,7 @@ methods (Access = private)
         else 
             error('Unknown exit criteria');
         end 
-    end  % end optimize fractional 
+    end  % end optimize_fractional 
    
 
     function [combo_cost, sol, timing, exitflag] = combo_solve(obj,...
@@ -2058,7 +2071,7 @@ methods (Access = private)
 
     % this needs matrices but parse normally wouldnt -- could call this after parse 
     % if there is a problem
-    function [new_sol, new_cost] = clean_solution(obj, y_sol, init_cost, index_map,...
+    function [new_sol, new_cost, result] = clean_solution(obj, y_sol, init_cost, index_map,...
                                                      matrices, comp_torques, motor, gearbox)
 
         dim_y = length(y_sol);
@@ -2122,10 +2135,6 @@ methods (Access = private)
         gmmu_good = [min_gmmu < obj.tolerances.gmmu_tol]; 
         ignore = and(I_bad, gmmu_good); 
         fix_idxs = and(moving, not(ignore));
-
-
-
-
 
         %% 
         tmp_sol(index_map.I(fix_idxs)) = I(fix_idxs);
@@ -2420,13 +2429,11 @@ methods (Access = private)
                                              A_ineq, b_ineq, quadcon, lb, ub,...
                                                     cutoff, obj.tolerances);
         elseif strcmpi(obj.settings.solver, 'ecos') 
-            if strcmpi(obj.settings.solver, 'ecos')
-                [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
-                             prep_socp(Q_cost, c_cost, beta0, A_eq, b_eq,...
-                        A_ineq, b_ineq, quadcon, lb, ub,  cutoff, 'ecos');
-                [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp,...
-                            G_soc, h_soc, G_rsoc, h_rsoc, obj.tolerances);
-            end
+            [c, A_eq, b_eq, A_lp, b_lp, G_soc, h_soc, G_rsoc, h_rsoc] = ...
+                         prep_socp(Q_cost, c_cost, beta0, A_eq, b_eq,...
+                    A_ineq, b_ineq, quadcon, lb, ub,  cutoff, 'ecos');
+            [result, data] = ecos_solve(c, A_eq, b_eq, A_lp, b_lp,...
+                             G_soc, h_soc, G_rsoc, h_rsoc, obj.tolerances);
         else
             error('invalid solver'); % shouldnt be possible 
         end 
@@ -2461,7 +2468,6 @@ methods (Access = private)
         ub = matrices.ub; 
         quadcon = matrices.quadcon;
         dim_y = length(lb);
-
 
 
 

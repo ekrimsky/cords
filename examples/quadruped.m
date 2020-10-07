@@ -742,7 +742,12 @@ end
 %settings.solver = 'ecos';
 settings.solver = 'gurobi';
 
-prob = cords('settings', settings); % instantiate new motor selection problem 
+prob = cords('settings', settings); % instantiate new motor selection problem
+
+
+filters.manufacturer = {'Maxon'};
+filters.total_mass = 1.4;         % just for speed on debugging 
+prob.update_filters(filters); 
 
 prob.update_problem(problem_data);   % update with the data 
 num_solutions = 2; % number of best combinations to return 
